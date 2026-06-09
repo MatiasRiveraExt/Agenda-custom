@@ -1,199 +1,32 @@
 import streamlit as st
 import pandas as pd
-import re
+import gspread
+from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="Consolidador Excel PRO", layout="wide")
-st.title("📊 Consolidador Automático Excel (Versión Robusta FINAL)")
-
-# =========================
-# UPLOAD
-# =========================
-track_file = st.file_uploader("SO Track", type=["xlsx"])
-plan_file = st.file_uploader("Pronóstico", type=["xlsx"])
-maestro_file = st.file_uploader("Maestro", type=["xlsx"])
+st.set_page_config(page_title="Agenda App", layout="wide")
+st.title("📊 Agenda con Google Sheets")
 
 # =========================
-# HELPERS
+# AUTH
 # =========================
-def clean_cols(df):
-    df.columns = (
-        df.columns.astype(str)
-        .str.strip()
-        .str.replace("\n", " ")
-        .str.replace("\xa0", " ")
-    )
-    return df
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
-def find_col(df, keywords):
-    for col in df.columns:
-        c = str(col).lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
-        for k in keywords:
-            k2 = k.lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
-            if k2 in c:
-                return col
-    return None
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=SCOPES
+)
 
-def safe_join(row):
-    return " ".join([str(x) for x in row])
+client = gspread.authorize(creds)
 
 # =========================
-# MAIN
+# ABRIR SHEET
 # =========================
-if st.button("🚀 Generar reporte"):
+SHEET_ID = "PEGA_AQUI_TU_SHEET_ID"
 
-    if not track_file or not plan_file or not maestro_file:
-        st.error("❌ Debes subir los 3 archivos")
-        st.stop()
+sheet = client.open_by_key(SHEET_ID)
 
-    # =========================
-    # TRACK
-    # =========================
-    track = pd.read_excel(track_file)
-    track = clean_cols(track)
-
-    # =========================
-    # MAESTRO
-    # =========================
-    maestro = pd.read_excel(maestro_file)
-    maestro = clean_cols(maestro)
-
-    # =========================
-    # PLAN (TODAS LAS HOJAS)
-    # =========================
-    plan_raw = pd.read_excel(plan_file, sheet_name=None)
-
-    st.write("📌 Hojas detectadas:")
-    st.write(list(plan_raw.keys()))
-
-    # =========================
-    # UNIR TODAS LAS HOJAS
-    # =========================
-    all_sheets = []
-    for name, df in plan_raw.items():
-        df = df.copy()
-        df["__sheet"] = name
-        all_sheets.append(df)
-
-    plan = pd.concat(all_sheets, ignore_index=True)
-    plan = clean_cols(plan)
-
-    st.write("📌 Vista combinada:")
-    st.dataframe(plan.head(20))
-
-    # =========================
-    # DETECTAR COLUMNAS TRACK
-    # =========================
-    track_order = find_col(track, ["po", "order", "orden"])
-    track_qty = find_col(track, ["quantity", "delivered", "qty"])
-    track_amt = find_col(track, ["amount", "monto"])
-
-    # =========================
-    # DETECTAR COLUMNAS PLAN
-    # =========================
-    plan_order = find_col(plan, ["oc", "cliente", "order", "po"])
-    plan_instr = find_col(plan, ["instru"])
-    plan_date = find_col(plan, ["fecha"])
-
-    # =========================
-    # DETECTAR MAESTRO
-    # =========================
-    maestro_order = find_col(maestro, ["num", "order", "po"])
-    maestro_dep = find_col(maestro, ["depart"])
-    maestro_pd = find_col(maestro, ["pd"])
-
-    # =========================
-    # VALIDACIÓN
-    # =========================
-    if not track_order:
-        st.error("❌ No se encontró Order en SO Track")
-        st.stop()
-
-    if not plan_order:
-        st.error("❌ No se encontró Order en Pronóstico")
-        st.write("📌 Columnas disponibles:")
-        st.write(plan.columns.tolist())
-        st.stop()
-
-    if not maestro_order:
-        st.error("❌ No se encontró Order en Maestro")
-        st.stop()
-
-    # =========================
-    # NORMALIZAR TRACK
-    # =========================
-    track = track.rename(columns={
-        track_order: "Order Number",
-        track_qty: "Suma de Unidades",
-        track_amt: "Monto"
-    })
-
-    # =========================
-    # NORMALIZAR PLAN
-    # =========================
-    plan = plan.rename(columns={
-        plan_order: "Order Number",
-        plan_instr: "Instrucciones" if plan_instr else "Instrucciones",
-        plan_date: "Fecha de entrega" if plan_date else "Fecha de entrega"
-    })
-
-    # =========================
-    # NORMALIZAR MAESTRO
-    # =========================
-    maestro = maestro.rename(columns={
-        maestro_order: "Order Number",
-        maestro_dep: "Departamento",
-        maestro_pd: "PD"
-    })
-
-    # =========================
-    # LIMPIEZA ORDER
-    # =========================
-    plan["Order Number"] = plan["Order Number"].astype(str).str.strip()
-
-    track["Order Number"] = track["Order Number"].astype(str).str.strip()
-    maestro["Order Number"] = maestro["Order Number"].astype(str).str.strip()
-
-    # =========================
-    # HORA
-    # =========================
-    if "Instrucciones" in plan.columns:
-        plan["Hora"] = plan["Instrucciones"].astype(str).str.extract(r'(\d{1,2}:\d{2})')
-    else:
-        plan["Hora"] = ""
-
-    # =========================
-    # MERGE
-    # =========================
-    df = track.merge(plan, on="Order Number", how="left")
-    df = df.merge(maestro, on="Order Number", how="left")
-
-    # =========================
-    # RESULTADO FINAL
-    # =========================
-    final = df[[
-        "Order Number",
-        "Departamento",
-        "PD",
-        "Suma de Unidades",
-        "Fecha de entrega",
-        "Hora",
-        "Monto"
-    ]].drop_duplicates()
-
-    final = final.fillna("")
-
-    st.success("✅ Reporte generado correctamente")
-
-    st.dataframe(final.head(50))
-
-    # =========================
-    # DOWNLOAD
-    # =========================
-    csv = final.to_csv(index=False).encode("utf-8")
-
-    st.download_button(
-        "⬇ Descargar reporte",
-        csv,
-        "reporte_final.csv",
-        "text/csv"
-    )
+st.success("✅ Conectado a Google Sheets")
+st.write("Hojas disponibles:", sheet.sheetnames)
