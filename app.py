@@ -53,9 +53,9 @@ def load_sheet(name):
 # CARGA DE DATOS
 # =========================
 try:
-    ordenes = load_sheet("ordenes")
-    track = load_sheet("track")
-    maestro = load_sheet("maestro")
+    ordenes = load_sheet("Ordenes")
+    track = load_sheet("Track")
+    maestro = load_sheet("Maestro")
 
     st.subheader("📌 Ordenes")
     st.dataframe(ordenes)
