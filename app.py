@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+import re
 
 # =====================================================
 # CONFIG
@@ -26,7 +27,6 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-# 🔥 PEGA TU ID
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 
 sheet = client.open_by_key(SHEET_ID)
@@ -34,83 +34,46 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =====================================================
-# DEBUG HOJAS
+# FUNCIONES
 # =====================================================
-st.write(
-    "📄 Hojas disponibles:",
-    [ws.title for ws in sheet.worksheets()]
-)
 
-# =====================================================
-# LIMPIEZA GENERAL
-# =====================================================
 def clean_dataframe(df):
 
     df = df.copy()
 
-    # convertir nombres a string
     df.columns = [str(c).strip() for c in df.columns]
 
-    # eliminar columnas vacías
     df = df.dropna(axis=1, how="all")
 
-    # eliminar duplicadas exactas
     df = df.loc[:, ~pd.Index(df.columns).duplicated(keep="first")]
 
     return df
 
 # =====================================================
-# HACER COLUMNAS ÚNICAS
-# =====================================================
-def ensure_unique_columns(df):
 
-    cols = []
-    seen = {}
+def extract_hour(text):
 
-    for col in df.columns:
+    if pd.isna(text):
+        return ""
 
-        if col not in seen:
-            seen[col] = 0
-            cols.append(col)
+    text = str(text)
 
-        else:
-            seen[col] += 1
-            cols.append(f"{col}_{seen[col]}")
+    match = re.search(r'(\d{1,2}:\d{2})', text)
 
-    df.columns = cols
+    if match:
+        return match.group(1)
 
-    return df
+    return ""
 
 # =====================================================
-# NORMALIZADOR
-# =====================================================
-def normalize_columns(df):
 
-    mapping = {
-        "PO Number": "Order Number",
-        "Num Order": "Order Number",
-        "O/C Cliente": "Order Number",
-        "Order": "Order Number",
-        "Order ID": "Order Number"
-    }
-
-    df = df.rename(columns=mapping)
-
-    return df
-
-# =====================================================
-# UPLOAD GOOGLE SHEETS
-# =====================================================
 def upload_to_sheet(df, sheet_name):
 
     ws = sheet.worksheet(sheet_name)
 
     ws.clear()
 
-    df = df.fillna("")
-
-    # convertir TODO a string
-    df = df.astype(str)
+    df = df.fillna("").astype(str)
 
     values = [df.columns.tolist()]
 
@@ -122,31 +85,30 @@ def upload_to_sheet(df, sheet_name):
 # =====================================================
 # UI
 # =====================================================
+
 st.subheader("📤 Subir archivos Excel")
 
 ordenes_file = st.file_uploader(
-    "Ordenes",
+    "Archivo Ordenes",
     type=["xlsx"]
 )
 
 track_file = st.file_uploader(
-    "Track",
+    "Archivo Track",
     type=["xlsx"]
 )
 
 maestro_file = st.file_uploader(
-    "Maestro",
+    "Archivo Maestro",
     type=["xlsx"]
 )
 
 # =====================================================
 # MAIN
 # =====================================================
-if st.button("🚀 Generar Agenda PRO"):
 
-    # =================================================
-    # VALIDACIÓN
-    # =================================================
+if st.button("🚀 Generar Agenda"):
+
     if not ordenes_file or not track_file or not maestro_file:
 
         st.error("❌ Debes subir los 3 archivos")
@@ -156,6 +118,7 @@ if st.button("🚀 Generar Agenda PRO"):
     # =================================================
     # LEER EXCEL
     # =================================================
+
     ordenes = pd.read_excel(ordenes_file)
 
     track = pd.read_excel(track_file)
@@ -167,27 +130,17 @@ if st.button("🚀 Generar Agenda PRO"):
     # =================================================
     # LIMPIEZA
     # =================================================
+
     ordenes = clean_dataframe(ordenes)
+
     track = clean_dataframe(track)
+
     maestro = clean_dataframe(maestro)
-
-    # =================================================
-    # NORMALIZAR
-    # =================================================
-    ordenes = normalize_columns(ordenes)
-    track = normalize_columns(track)
-    maestro = normalize_columns(maestro)
-
-    # =================================================
-    # HACER COLUMNAS ÚNICAS
-    # =================================================
-    ordenes = ensure_unique_columns(ordenes)
-    track = ensure_unique_columns(track)
-    maestro = ensure_unique_columns(maestro)
 
     # =================================================
     # DEBUG
     # =================================================
+
     st.write("📌 Ordenes cols:")
     st.write(ordenes.columns.tolist())
 
@@ -198,73 +151,99 @@ if st.button("🚀 Generar Agenda PRO"):
     st.write(maestro.columns.tolist())
 
     # =================================================
-    # VALIDAR KEY
+    # EXTRAER HORA
     # =================================================
-    required = "Order Number"
 
-    for name, df in [
-        ("Ordenes", ordenes),
-        ("Track", track),
-        ("Maestro", maestro)
-    ]:
-
-        if required not in df.columns:
-
-            st.error(f"❌ No existe '{required}' en {name}")
-
-            st.write(df.columns.tolist())
-
-            st.stop()
+    ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
 
     # =================================================
-    # SUBIR A SHEETS
+    # CREAR DATAFRAMES NECESARIOS
     # =================================================
-    upload_to_sheet(ordenes, "Ordenes")
 
-    upload_to_sheet(track, "Track")
+    # TRACK
+    track_final = track[[
+        "PO Number",
+        "Delivered Quantity",
+        "Delivered Amount"
+    ]].copy()
 
-    upload_to_sheet(maestro, "Maestro")
+    track_final = track_final.rename(columns={
+        "PO Number": "Num Order",
+        "Delivered Quantity": "Suma de Unidades",
+        "Delivered Amount": "Monto"
+    })
 
-    st.success("☁️ Datos subidos a Google Sheets")
+    # MAESTRO
+    maestro_final = maestro[[
+        "Order Number",
+        "Departamento",
+        "PD"
+    ]].copy()
+
+    maestro_final = maestro_final.rename(columns={
+        "Order Number": "Num Order"
+    })
+
+    # ORDENES
+    ordenes_final = ordenes[[
+        "Order Number",
+        "Fecha Entrega",
+        "Hora"
+    ]].copy()
+
+    ordenes_final = ordenes_final.rename(columns={
+        "Order Number": "Num Order",
+        "Fecha Entrega": "Fecha de entrega"
+    })
 
     # =================================================
-    # MERGE
+    # MERGES
     # =================================================
-    try:
 
-        df = ordenes.merge(
-            track,
-            on="Order Number",
-            how="left"
-        )
+    df = track_final.merge(
+        maestro_final,
+        on="Num Order",
+        how="left"
+    )
 
-        df = df.merge(
-            maestro,
-            on="Order Number",
-            how="left"
-        )
+    df = df.merge(
+        ordenes_final,
+        on="Num Order",
+        how="left"
+    )
 
-    except Exception as e:
+    # =================================================
+    # ORDEN FINAL
+    # =================================================
 
-        st.error(f"❌ Error en merge: {e}")
-
-        st.stop()
+    df = df[[
+        "Num Order",
+        "Departamento",
+        "PD",
+        "Suma de Unidades",
+        "Fecha de entrega",
+        "Hora",
+        "Monto"
+    ]]
 
     # =================================================
     # LIMPIEZA FINAL
     # =================================================
+
     df = df.fillna("")
 
     df = df.drop_duplicates()
 
     # =================================================
-    # GUARDAR AGENDA
+    # SUBIR A GOOGLE SHEETS
     # =================================================
+
     upload_to_sheet(df, "Agenda Final")
 
     # =================================================
     # TIMESTAMP
     # =================================================
+
     ws = sheet.worksheet("Agenda Final")
 
     timestamp = datetime.now().strftime(
@@ -272,25 +251,27 @@ if st.button("🚀 Generar Agenda PRO"):
     )
 
     ws.update(
-        "H1",
+        "J1",
         [[f"Última actualización: {timestamp}"]]
     )
 
     # =================================================
     # SUCCESS
     # =================================================
+
     st.success("🎯 Agenda generada correctamente")
 
     st.dataframe(df)
 
 # =====================================================
-# MOSTRAR ÚLTIMA ACTUALIZACIÓN
+# MOSTRAR TIMESTAMP
 # =====================================================
+
 try:
 
     ws = sheet.worksheet("Agenda Final")
 
-    last_update = ws.acell("H1").value
+    last_update = ws.acell("J1").value
 
     st.info(last_update)
 
