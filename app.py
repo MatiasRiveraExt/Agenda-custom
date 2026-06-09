@@ -3,26 +3,40 @@ import pandas as pd
 import re
 
 st.set_page_config(page_title="Consolidador Excel", layout="wide")
-
 st.title("📊 Consolidador Automático de Excel")
-st.write("Sube los 3 archivos para generar el reporte final.")
+
+st.write("Sube tus 3 archivos: SO Track, Pronóstico, Maestro")
 
 # =========================
-# UPLOAD FILES
+# UPLOAD
 # =========================
-track_file = st.file_uploader("📁 SO Track", type=["xlsx"])
-plan_file = st.file_uploader("📁 Pronóstico / Planificación", type=["xlsx"])
-maestro_file = st.file_uploader("📁 Maestro (Departamento / PD)", type=["xlsx"])
+track_file = st.file_uploader("SO Track", type=["xlsx"])
+plan_file = st.file_uploader("Pronóstico", type=["xlsx"])
+maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 # =========================
-# FUNCTION: CLEAN COLUMNS
+# HELPERS
 # =========================
-def clean_columns(df):
-    df.columns = df.columns.str.strip()
+def clean_cols(df):
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.replace("\n", " ")
+        .str.replace("\xa0", " ")
+    )
     return df
 
+def find_col(df, keywords):
+    for col in df.columns:
+        c = col.lower().replace(" ", "").replace("/", "")
+        for k in keywords:
+            k2 = k.lower().replace(" ", "").replace("/", "")
+            if k2 in c:
+                return col
+    return None
+
 # =========================
-# PROCESS BUTTON
+# MAIN
 # =========================
 if st.button("🚀 Generar reporte"):
 
@@ -34,62 +48,79 @@ if st.button("🚀 Generar reporte"):
     # READ FILES
     # =========================
     track = pd.read_excel(track_file)
-    plan = pd.read_excel(plan_file)
+    plan_raw = pd.read_excel(plan_file, sheet_name=None)  # 🔥 TODAS LAS HOJAS
     maestro = pd.read_excel(maestro_file)
 
-    track = clean_columns(track)
-    plan = clean_columns(plan)
-    maestro = clean_columns(maestro)
+    track = clean_cols(track)
+    maestro = clean_cols(maestro)
 
     # =========================
-    # NORMALIZAR COLUMNAS CLAVE
+    # 🔥 ELEGIR HOJA MÁS GRANDE DEL PLAN
     # =========================
-    def find_col(df, keywords):
-        for col in df.columns:
-            for k in keywords:
-                if k.lower() in col.lower():
-                    return col
-        return None
+    plan = max(plan_raw.values(), key=lambda x: x.shape[0])
+    plan = clean_cols(plan)
 
-    track_order = find_col(track, ["po number"])
-    plan_order = find_col(plan, ["o/c", "cliente", "oc cliente"])
-    maestro_order = find_col(maestro, ["num order"])
+    st.write("📌 Hoja seleccionada automáticamente:", plan.shape)
 
+    # =========================
+    # DETECTAR COLUMNAS TRACK
+    # =========================
+    track_order = find_col(track, ["po number", "order", "po"])
+    track_qty = find_col(track, ["quantity", "delivered", "qty"])
+    track_amt = find_col(track, ["amount", "monto"])
+
+    # =========================
+    # DETECTAR PLAN
+    # =========================
+    plan_order = find_col(plan, ["o/c", "cliente", "order", "po"])
+    plan_instr = find_col(plan, ["instru"])
+    plan_date = find_col(plan, ["fecha"])
+
+    # =========================
+    # DETECTAR MAESTRO
+    # =========================
+    maestro_order = find_col(maestro, ["num order", "order"])
+    maestro_dep = find_col(maestro, ["depart"])
+    maestro_pd = find_col(maestro, ["pd"])
+
+    # =========================
+    # VALIDACIÓN
+    # =========================
     if not track_order:
-     st.error("❌ No se encontró 'PO Number' en SO Track")
+        st.error("❌ No se encontró Order en SO Track")
+        st.stop()
 
     if not plan_order:
-     st.error("❌ No se encontró 'O/C Cliente' en Pronóstico")
+        st.error("❌ No se encontró Order en Pronóstico")
+        st.stop()
 
     if not maestro_order:
-     st.error("❌ No se encontró 'Num Order' en Órdenes Liberadas")
-
-    if not track_order or not plan_order or not maestro_order:
-     st.stop()
+        st.error("❌ No se encontró Order en Maestro")
+        st.stop()
 
     # =========================
-    # STANDARDIZE
+    # NORMALIZAR
     # =========================
     track = track.rename(columns={
         track_order: "Order Number",
-        find_col(track, ["delivered quantity"]): "Suma de Unidades",
-        find_col(track, ["delivered amount"]): "Monto"
+        track_qty: "Suma de Unidades",
+        track_amt: "Monto"
     })
 
     plan = plan.rename(columns={
         plan_order: "Order Number",
-        find_col(plan, ["instru"]): "Instrucciones",
-        find_col(plan, ["fecha"]): "Fecha de entrega"
+        plan_instr: "Instrucciones" if plan_instr else "Instrucciones",
+        plan_date: "Fecha de entrega" if plan_date else "Fecha de entrega"
     })
 
     maestro = maestro.rename(columns={
         maestro_order: "Order Number",
-        find_col(maestro, ["depart"]): "Departamento",
-        find_col(maestro, ["pd"]): "PD"
+        maestro_dep: "Departamento",
+        maestro_pd: "PD"
     })
 
     # =========================
-    # EXTRAER HORA
+    # HORA
     # =========================
     if "Instrucciones" in plan.columns:
         plan["Hora"] = plan["Instrucciones"].astype(str).str.extract(r'(\d{1,2}:\d{2})')
@@ -97,7 +128,7 @@ if st.button("🚀 Generar reporte"):
         plan["Hora"] = ""
 
     # =========================
-    # MERGES
+    # MERGE
     # =========================
     df = track.merge(plan, on="Order Number", how="left")
     df = df.merge(maestro, on="Order Number", how="left")
@@ -117,17 +148,14 @@ if st.button("🚀 Generar reporte"):
 
     final = final.fillna("")
 
-    st.success("✅ Reporte generado correctamente")
+    st.success("✅ Reporte generado")
 
-    st.dataframe(final.head(30))
+    st.dataframe(final.head(50))
 
-    # =========================
-    # DOWNLOAD
-    # =========================
     csv = final.to_csv(index=False).encode("utf-8")
 
     st.download_button(
-        "⬇ Descargar reporte (CSV)",
+        "⬇ Descargar reporte",
         csv,
         "reporte_final.csv",
         "text/csv"
