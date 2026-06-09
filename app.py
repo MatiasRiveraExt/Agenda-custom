@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 st.set_page_config(page_title="Consolidador Excel PRO", layout="wide")
-st.title("📊 Consolidador Automático Excel (Versión Robusta)")
+st.title("📊 Consolidador Automático Excel (Versión Robusta FINAL)")
 
 # =========================
 # UPLOAD
@@ -16,31 +16,28 @@ maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 # HELPERS
 # =========================
 def clean_cols(df):
-    df.columns = df.columns.astype(str).str.strip().str.replace("\n", " ")
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.replace("\n", " ")
+        .str.replace("\xa0", " ")
+    )
     return df
 
 def find_col(df, keywords):
     for col in df.columns:
-        c = str(col).lower().replace(" ", "").replace("/", "").replace("_", "")
+        c = str(col).lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
         for k in keywords:
-            k2 = k.lower().replace(" ", "").replace("/", "").replace("_", "")
+            k2 = k.lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
             if k2 in c:
                 return col
     return None
 
-def detect_header(df_raw):
-    """
-    Busca fila donde aparece 'cliente', 'order' o 'oc'
-    """
-    for i in range(len(df_raw)):
-        row = df_raw.iloc[i].astype(str).str.lower().tolist()
-        text = " ".join(row)
-        if ("cliente" in text) or ("order" in text) or ("oc" in text) or ("po" in text):
-            return i
-    return 0
+def safe_join(row):
+    return " ".join([str(x) for x in row])
 
 # =========================
-# RUN
+# MAIN
 # =========================
 if st.button("🚀 Generar reporte"):
 
@@ -61,28 +58,27 @@ if st.button("🚀 Generar reporte"):
     maestro = clean_cols(maestro)
 
     # =========================
-    # PLAN (RAW)
+    # PLAN (TODAS LAS HOJAS)
     # =========================
-    plan_raw = pd.read_excel(plan_file, sheet_name="Pronostico JUNIO", header=None)
+    plan_raw = pd.read_excel(plan_file, sheet_name=None)
 
-    st.write("📌 Vista cruda del pronóstico")
-    st.dataframe(plan_raw.head(10))
-
-    # =========================
-    # DETECT HEADER REAL
-    # =========================
-    header_row = detect_header(plan_raw)
-
-    st.write("📌 Header detectado en fila:", header_row)
+    st.write("📌 Hojas detectadas:")
+    st.write(list(plan_raw.keys()))
 
     # =========================
-    # RECONSTRUIR TABLA REAL
+    # UNIR TODAS LAS HOJAS
     # =========================
-    plan = pd.read_excel(plan_file, sheet_name="Pronostico JUNIO", header=header_row)
+    all_sheets = []
+    for name, df in plan_raw.items():
+        df = df.copy()
+        df["__sheet"] = name
+        all_sheets.append(df)
+
+    plan = pd.concat(all_sheets, ignore_index=True)
     plan = clean_cols(plan)
 
-    st.write("📌 Columnas reales del plan:")
-    st.write(plan.columns.tolist())
+    st.write("📌 Vista combinada:")
+    st.dataframe(plan.head(20))
 
     # =========================
     # DETECTAR COLUMNAS TRACK
@@ -114,7 +110,8 @@ if st.button("🚀 Generar reporte"):
 
     if not plan_order:
         st.error("❌ No se encontró Order en Pronóstico")
-        st.write("👉 Revisa columnas reales arriba")
+        st.write("📌 Columnas disponibles:")
+        st.write(plan.columns.tolist())
         st.stop()
 
     if not maestro_order:
@@ -149,7 +146,15 @@ if st.button("🚀 Generar reporte"):
     })
 
     # =========================
-    # EXTRAER HORA
+    # LIMPIEZA ORDER
+    # =========================
+    plan["Order Number"] = plan["Order Number"].astype(str).str.strip()
+
+    track["Order Number"] = track["Order Number"].astype(str).str.strip()
+    maestro["Order Number"] = maestro["Order Number"].astype(str).str.strip()
+
+    # =========================
+    # HORA
     # =========================
     if "Instrucciones" in plan.columns:
         plan["Hora"] = plan["Instrucciones"].astype(str).str.extract(r'(\d{1,2}:\d{2})')
@@ -157,12 +162,7 @@ if st.button("🚀 Generar reporte"):
         plan["Hora"] = ""
 
     # =========================
-    # LIMPIEZA FINAL
-    # =========================
-    plan = plan.dropna(subset=["Order Number"])
-
-    # =========================
-    # MERGE SEGURO
+    # MERGE
     # =========================
     df = track.merge(plan, on="Order Number", how="left")
     df = df.merge(maestro, on="Order Number", how="left")
