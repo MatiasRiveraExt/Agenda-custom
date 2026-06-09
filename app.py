@@ -33,24 +33,11 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-# =====================================================
-# GOOGLE SHEET ID
-# =====================================================
-
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 
 sheet = client.open_by_key(SHEET_ID)
 
 st.success("✅ Conectado a Google Sheets")
-
-# =====================================================
-# MOSTRAR HOJAS
-# =====================================================
-
-st.write(
-    "📄 Hojas disponibles:",
-    [ws.title for ws in sheet.worksheets()]
-)
 
 # =====================================================
 # FUNCIONES
@@ -59,16 +46,9 @@ st.write(
 def clean_dataframe(df):
 
     df = df.copy()
-
-    # limpiar nombres columnas
     df.columns = [str(c).strip() for c in df.columns]
-
-    # eliminar columnas vacías
     df = df.dropna(axis=1, how="all")
-
-    # eliminar columnas duplicadas
     df = df.loc[:, ~pd.Index(df.columns).duplicated(keep="first")]
-
     return df
 
 # =====================================================
@@ -79,8 +59,6 @@ def extract_hour(text):
         return ""
 
     text = str(text)
-
-    # buscar HH:MM
     match = re.search(r'(\d{1,2}:\d{2})', text)
 
     if match:
@@ -89,17 +67,35 @@ def extract_hour(text):
     return ""
 
 # =====================================================
+# 🔥 FIX CLAVE: NORMALIZAR OC / ORDER NUMBER
+# =====================================================
+
+def normalize_order(x):
+
+    if pd.isna(x):
+        return ""
+
+    x = str(x).strip()
+
+    # elimina espacios raros
+    x = x.replace("\u00a0", "")
+
+    # elimina .0 de Excel
+    x = re.sub(r"\.0$", "", x)
+
+    # elimina ceros a la izquierda (ESTO ARREGLA TU BUG)
+    x = x.lstrip("0")
+
+    return x
+
+# =====================================================
 
 def format_chilean_money(value):
 
     try:
-
         value = float(value)
-
         return f"{int(value):,}".replace(",", ".")
-
     except:
-
         return value
 
 # =====================================================
@@ -107,11 +103,8 @@ def format_chilean_money(value):
 def format_date(value):
 
     try:
-
         return pd.to_datetime(value).strftime("%d-%m-%Y")
-
     except:
-
         return value
 
 # =====================================================
@@ -119,7 +112,6 @@ def format_date(value):
 def upload_to_sheet(df, sheet_name):
 
     ws = sheet.worksheet(sheet_name)
-
     ws.clear()
 
     df = df.fillna("").astype(str)
@@ -137,20 +129,10 @@ def to_excel(df):
 
     output = BytesIO()
 
-    with pd.ExcelWriter(
-        output,
-        engine="openpyxl"
-    ) as writer:
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Agenda")
 
-        df.to_excel(
-            writer,
-            index=False,
-            sheet_name="Agenda"
-        )
-
-    processed_data = output.getvalue()
-
-    return processed_data
+    return output.getvalue()
 
 # =====================================================
 # UI
@@ -158,20 +140,9 @@ def to_excel(df):
 
 st.subheader("📤 Subir archivos Excel")
 
-ordenes_file = st.file_uploader(
-    "Archivo Ordenes",
-    type=["xlsx"]
-)
-
-track_file = st.file_uploader(
-    "Archivo Track",
-    type=["xlsx"]
-)
-
-maestro_file = st.file_uploader(
-    "Archivo Maestro",
-    type=["xlsx"]
-)
+ordenes_file = st.file_uploader("Archivo Ordenes", type=["xlsx"])
+track_file = st.file_uploader("Archivo Track", type=["xlsx"])
+maestro_file = st.file_uploader("Archivo Maestro", type=["xlsx"])
 
 # =====================================================
 # MAIN
@@ -179,105 +150,48 @@ maestro_file = st.file_uploader(
 
 if st.button("🚀 Generar Agenda"):
 
-    # =================================================
-    # VALIDACIÓN
-    # =================================================
-
     if not ordenes_file or not track_file or not maestro_file:
-
         st.error("❌ Debes subir los 3 archivos")
-
         st.stop()
 
     # =================================================
-    # LEER EXCEL
+    # LECTURA
     # =================================================
 
-    ordenes = pd.read_excel(ordenes_file)
-
-    track = pd.read_excel(track_file)
-
-    maestro = pd.read_excel(maestro_file)
+    ordenes = clean_dataframe(pd.read_excel(ordenes_file))
+    track = clean_dataframe(pd.read_excel(track_file))
+    maestro = clean_dataframe(pd.read_excel(maestro_file))
 
     st.success("📥 Archivos cargados")
 
     # =================================================
-    # LIMPIEZA
+    # VALIDACIÓN
     # =================================================
 
-    ordenes = clean_dataframe(ordenes)
-
-    track = clean_dataframe(track)
-
-    maestro = clean_dataframe(maestro)
-
-    # =================================================
-    # DEBUG COLUMNAS
-    # =================================================
-
-    st.write("📌 Ordenes cols:")
-    st.write(ordenes.columns.tolist())
-
-    st.write("📌 Track cols:")
-    st.write(track.columns.tolist())
-
-    st.write("📌 Maestro cols:")
-    st.write(maestro.columns.tolist())
-
-    # =================================================
-    # VALIDAR COLUMNAS
-    # =================================================
-
-    required_ordenes = [
-        "O/C Cliente",
-        "Fecha Entrega",
-        "Instrucciones"
-    ]
-
-    required_track = [
-        "PO Number",
-        "Sold to Name",
-        "Delivered Quantity",
-        "Delivered Amount"
-    ]
-
-    required_maestro = [
-        "Num Order",
-        "Departamento",
-        "PD"
-    ]
+    required_ordenes = ["O/C Cliente", "Fecha Entrega", "Instrucciones"]
+    required_track = ["PO Number", "Sold to Name", "Delivered Quantity", "Delivered Amount"]
+    required_maestro = ["Num Order", "Departamento", "PD"]
 
     for col in required_ordenes:
-
         if col not in ordenes.columns:
-
             st.error(f"❌ Falta '{col}' en Ordenes")
-
             st.stop()
 
     for col in required_track:
-
         if col not in track.columns:
-
             st.error(f"❌ Falta '{col}' en Track")
-
             st.stop()
 
     for col in required_maestro:
-
         if col not in maestro.columns:
-
             st.error(f"❌ Falta '{col}' en Maestro")
-
             st.stop()
 
     # =================================================
-    # EXTRAER HORA
+    # HORA
     # =================================================
 
-    ordenes["Hora"] = ordenes["Instrucciones"].apply(
-        extract_hour
-    )
+    ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
 
     # =================================================
     # TRACK
@@ -291,15 +205,10 @@ if st.button("🚀 Generar Agenda"):
     ]].copy()
 
     track_final = track_final.rename(columns={
-
         "PO Number": "Num Order",
-
         "Sold to Name": "Cliente",
-
         "Delivered Quantity": "Suma de Unidades",
-
         "Delivered Amount": "Monto"
-
     })
 
     # =================================================
@@ -323,34 +232,17 @@ if st.button("🚀 Generar Agenda"):
     ]].copy()
 
     ordenes_final = ordenes_final.rename(columns={
-
         "O/C Cliente": "Num Order",
-
         "Fecha Entrega": "Fecha de entrega"
-
     })
 
     # =================================================
-    # NORMALIZAR KEYS
+    # 🔥 NORMALIZAR KEYS (FIX CRÍTICO)
     # =================================================
 
-    track_final["Num Order"] = (
-        track_final["Num Order"]
-        .astype(str)
-        .str.strip()
-    )
-
-    maestro_final["Num Order"] = (
-        maestro_final["Num Order"]
-        .astype(str)
-        .str.strip()
-    )
-
-    ordenes_final["Num Order"] = (
-        ordenes_final["Num Order"]
-        .astype(str)
-        .str.strip()
-    )
+    track_final["Num Order"] = track_final["Num Order"].apply(normalize_order)
+    maestro_final["Num Order"] = maestro_final["Num Order"].apply(normalize_order)
+    ordenes_final["Num Order"] = ordenes_final["Num Order"].apply(normalize_order)
 
     # =================================================
     # DEBUG
@@ -371,129 +263,75 @@ if st.button("🚀 Generar Agenda"):
 
     try:
 
-        df = track_final.merge(
-            maestro_final,
-            on="Num Order",
-            how="left"
-        )
-
-        df = df.merge(
-            ordenes_final,
-            on="Num Order",
-            how="left"
-        )
+        df = track_final.merge(maestro_final, on="Num Order", how="left")
+        df = df.merge(ordenes_final, on="Num Order", how="left")
 
     except Exception as e:
-
         st.error(f"❌ Error merge: {e}")
-
         st.stop()
 
     # =================================================
     # FORMATO
     # =================================================
 
-    df["Monto"] = df["Monto"].apply(
-        format_chilean_money
-    )
-
-    df["Fecha de entrega"] = df[
-        "Fecha de entrega"
-    ].apply(format_date)
+    df["Monto"] = df["Monto"].apply(format_chilean_money)
+    df["Fecha de entrega"] = df["Fecha de entrega"].apply(format_date)
 
     # =================================================
     # ORDEN FINAL
     # =================================================
 
     df = df[[
-
         "Num Order",
-
         "Cliente",
-
         "Departamento",
-
         "PD",
-
         "Suma de Unidades",
-
         "Fecha de entrega",
-
         "Hora",
-
         "Monto"
-
     ]]
 
-    # =================================================
-    # LIMPIEZA FINAL
-    # =================================================
-
     df = df.fillna("")
-
     df = df.drop_duplicates()
 
     # =================================================
-    # SUBIR A GOOGLE SHEETS
+    # GOOGLE SHEETS
     # =================================================
 
     upload_to_sheet(df, "Agenda Final")
 
-    st.success("☁️ Agenda subida a Google Sheets")
-
-    # =================================================
-    # TIMESTAMP
-    # =================================================
-
     ws = sheet.worksheet("Agenda Final")
 
-    timestamp = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    ws.update(
-        "J1",
-        [[f"Última actualización: {timestamp}"]]
-    )
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws.update("J1", [[f"Última actualización: {timestamp}"]])
 
     # =================================================
-    # SUCCESS
+    # RESULTADO
     # =================================================
 
     st.success("🎯 Agenda generada correctamente")
-
     st.dataframe(df)
 
     # =================================================
-    # DESCARGAR EXCEL
+    # DESCARGA EXCEL
     # =================================================
 
     excel_data = to_excel(df)
 
     st.download_button(
-
         label="📥 Descargar Agenda Excel",
-
         data=excel_data,
-
         file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
     )
 
 # =====================================================
-# MOSTRAR ÚLTIMA ACTUALIZACIÓN
+# TIMESTAMP UI
 # =====================================================
 
 try:
-
     ws = sheet.worksheet("Agenda Final")
-
-    last_update = ws.acell("J1").value
-
-    st.info(last_update)
-
+    st.info(ws.acell("J1").value)
 except:
-
     st.warning("Sin actualizaciones aún")
