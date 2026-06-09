@@ -51,9 +51,9 @@ if st.button("🚀 Generar reporte"):
                     return col
         return None
 
-    track_order = find_col(track, ["order"])
-    plan_order = find_col(plan, ["order"])
-    maestro_order = find_col(maestro, ["order"])
+    track_order = find_col(track, ["po number"])
+    plan_order = find_col(plan, ["o/c cliente"])
+    maestro_order = find_col(maestro, ["num order"])
 
     if not track_order or not plan_order or not maestro_order:
         st.error("❌ No se encontró la columna 'Order Number' en uno de los archivos")
