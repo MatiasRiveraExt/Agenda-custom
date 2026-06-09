@@ -76,13 +76,39 @@ def extract_hour(text):
 
     text = str(text)
 
-    # buscar formato HH:MM
+    # buscar HH:MM
     match = re.search(r'(\d{1,2}:\d{2})', text)
 
     if match:
         return match.group(1)
 
     return ""
+
+# =====================================================
+
+def format_chilean_money(value):
+
+    try:
+
+        value = float(value)
+
+        return f"{int(value):,}".replace(",", ".")
+
+    except:
+
+        return value
+
+# =====================================================
+
+def format_date(value):
+
+    try:
+
+        return pd.to_datetime(value).strftime("%d-%m-%Y")
+
+    except:
+
+        return value
 
 # =====================================================
 
@@ -185,6 +211,7 @@ if st.button("🚀 Generar Agenda"):
 
     required_track = [
         "PO Number",
+        "Sold to Name",
         "Delivered Quantity",
         "Delivered Amount"
     ]
@@ -227,12 +254,14 @@ if st.button("🚀 Generar Agenda"):
 
     track_final = track[[
         "PO Number",
+        "Sold to Name",
         "Delivered Quantity",
         "Delivered Amount"
     ]].copy()
 
     track_final = track_final.rename(columns={
         "PO Number": "Num Order",
+        "Sold to Name": "Cliente",
         "Delivered Quantity": "Suma de Unidades",
         "Delivered Amount": "Monto"
     })
@@ -322,11 +351,24 @@ if st.button("🚀 Generar Agenda"):
         st.stop()
 
     # =================================================
+    # FORMATO
+    # =================================================
+
+    df["Monto"] = df["Monto"].apply(
+        format_chilean_money
+    )
+
+    df["Fecha de entrega"] = df[
+        "Fecha de entrega"
+    ].apply(format_date)
+
+    # =================================================
     # ORDEN FINAL
     # =================================================
 
     df = df[[
         "Num Order",
+        "Cliente",
         "Departamento",
         "PD",
         "Suma de Unidades",
