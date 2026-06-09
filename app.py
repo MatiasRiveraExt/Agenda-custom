@@ -52,7 +52,7 @@ if st.button("🚀 Generar reporte"):
         return None
 
     track_order = find_col(track, ["po number"])
-    plan_order = find_col(plan, ["o/c cliente"])
+    plan_order = find_col(plan, ["o/c", "cliente", "oc cliente"])
     maestro_order = find_col(maestro, ["num order"])
 
     if not track_order:
