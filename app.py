@@ -2,15 +2,16 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+from datetime import datetime
 
 # =========================
-# CONFIGURACIÓN GENERAL
+# CONFIG
 # =========================
-st.set_page_config(page_title="Agenda System", layout="wide")
-st.title("📊 Sistema de Agenda con Google Sheets")
+st.set_page_config(page_title="Agenda PRO", layout="wide")
+st.title("📊 Agenda Automática PRO")
 
 # =========================
-# AUTH GOOGLE SHEETS
+# AUTH GOOGLE
 # =========================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -24,80 +25,90 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-# =========================
-# CONECTAR SHEET
-# =========================
-SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
-
+SHEET_ID = "PEGA_AQUI_TU_SHEET_ID"
 sheet = client.open_by_key(SHEET_ID)
 
 st.success("✅ Conectado a Google Sheets")
 
 # =========================
-# MOSTRAR HOJAS
+# TIMESTAMP
 # =========================
-worksheets = sheet.worksheets()
-
-st.subheader("📄 Hojas disponibles")
-st.write([ws.title for ws in worksheets])
-
-# =========================
-# FUNCIÓN PARA LEER HOJAS
-# =========================
-def load_sheet(name):
-    ws = sheet.worksheet(name)
-    data = ws.get_all_records()
-    return pd.DataFrame(data)
+def set_last_update():
+    ws = sheet.worksheet("Agenda Final")
+    ws.update("H1", [["Última actualización: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")]])
 
 # =========================
-# CARGA DE DATOS
+# SUBIDA DE ARCHIVOS
 # =========================
-try:
-    ordenes = load_sheet("Ordenes")
-    track = load_sheet("Track")
-    maestro = load_sheet("Maestro")
+st.subheader("📤 Cargar archivos Excel")
 
-    st.subheader("📌 Ordenes")
-    st.dataframe(ordenes)
-
-    st.subheader("📌 Track")
-    st.dataframe(track)
-
-    st.subheader("📌 Maestro")
-    st.dataframe(maestro)
-
-except Exception as e:
-    st.error(f"❌ Error cargando datos: {e}")
+ordenes_file = st.file_uploader("Ordenes", type=["xlsx"])
+track_file = st.file_uploader("Track", type=["xlsx"])
+maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 # =========================
-# GENERAR AGENDA
+# FUNCIÓN EXCEL → SHEETS
 # =========================
-st.divider()
+def upload_to_sheet(df, sheet_name):
+    ws = sheet.worksheet(sheet_name)
+    ws.clear()
+    ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
 
-if st.button("🚀 Generar Agenda"):
+# =========================
+# PROCESO PRINCIPAL
+# =========================
+if st.button("🚀 Actualizar Base y Generar Agenda"):
 
-    try:
+    if not ordenes_file or not track_file or not maestro_file:
+        st.error("❌ Debes subir los 3 archivos")
+    else:
+
+        # Leer Excel
+        ordenes = pd.read_excel(ordenes_file)
+        track = pd.read_excel(track_file)
+        maestro = pd.read_excel(maestro_file)
+
+        st.success("📥 Archivos cargados correctamente")
+
+        # =========================
+        # NORMALIZAR COLUMNAS
+        # =========================
+        ordenes.columns = ordenes.columns.str.strip()
+        track.columns = track.columns.str.strip()
+        maestro.columns = maestro.columns.str.strip()
+
+        # =========================
+        # SUBIR A SHEETS
+        # =========================
+        upload_to_sheet(ordenes, "Ordenes")
+        upload_to_sheet(track, "Track")
+        upload_to_sheet(maestro, "Maestro")
+
+        st.success("☁️ Datos actualizados en Google Sheets")
+
+        # =========================
+        # GENERAR AGENDA
+        # =========================
         df = ordenes.merge(track, on="Order Number", how="left")
         df = df.merge(maestro, on="Order Number", how="left")
 
-        df = df.drop_duplicates()
         df = df.fillna("")
+        df = df.drop_duplicates()
 
-        st.success("✅ Agenda generada")
+        upload_to_sheet(df, "Agenda Final")
+
+        set_last_update()
+
+        st.success("🎯 Agenda generada correctamente")
 
         st.dataframe(df)
 
-        # =========================
-        # GUARDAR EN GOOGLE SHEETS
-        # =========================
-        ws = sheet.worksheet("agenda_final")
-        ws.clear()
-
-        ws.update(
-            [df.columns.tolist()] + df.values.tolist()
-        )
-
-        st.success("💾 Agenda guardada en Google Sheets")
-
-    except Exception as e:
-        st.error(f"❌ Error generando agenda: {e}")
+# =========================
+# MOSTRAR ÚLTIMA ACTUALIZACIÓN
+# =========================
+try:
+    ws = sheet.worksheet("Agenda Final")
+    last_update = ws.acell("H1").value
+    st.info(last_update)
+except:
+    st.warning("Sin registro de actualización aún")
