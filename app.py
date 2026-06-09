@@ -41,25 +41,30 @@ st.write("📄 Hojas disponibles:", [ws.title for ws in worksheets])
 # =========================
 def load_sheet(name):
     ws = sheet.worksheet(name)
-    data = ws.get_all_records()
-    return pd.DataFrame(data)
+    return pd.DataFrame(ws.get_all_records())
 
 # =========================
-# FUNCIÓN CRÍTICA (FIX ERROR)
+# 🔥 FUNCIÓN FIX DEFINITIVA (ANTI ERROR JSON)
 # =========================
 def upload_to_sheet(df, sheet_name):
     ws = sheet.worksheet(sheet_name)
     ws.clear()
 
-    # 🔥 LIMPIEZA TOTAL PARA EVITAR ERROR JSON
     df_clean = df.copy()
 
+    # 🔥 eliminar NaN
     df_clean = df_clean.fillna("")
 
-    # convertir todo a string seguro para gspread
+    # 🔥 convertir TODO a string seguro
     df_clean = df_clean.astype(str)
 
-    values = [df_clean.columns.tolist()] + df_clean.values.tolist()
+    # 🔥 construir matriz 2D limpia
+    values = []
+    values.append([str(col) for col in df_clean.columns])
+
+    for row in df_clean.values:
+        clean_row = [str(cell) for cell in row]
+        values.append(clean_row)
 
     ws.update(values)
 
@@ -75,14 +80,14 @@ maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 # =========================
 # PROCESO PRINCIPAL
 # =========================
-if st.button("🚀 Actualizar y Generar Agenda"):
+if st.button("🚀 Generar Agenda PRO"):
 
     if not ordenes_file or not track_file or not maestro_file:
         st.error("❌ Debes subir los 3 archivos")
         st.stop()
 
     # =========================
-    # LECTURA EXCEL
+    # LEER EXCEL
     # =========================
     ordenes = pd.read_excel(ordenes_file)
     track = pd.read_excel(track_file)
@@ -129,11 +134,10 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     st.dataframe(df)
 
 # =========================
-# MOSTRAR ÚLTIMA ACTUALIZACIÓN
+# TIMESTAMP DISPLAY
 # =========================
 try:
     ws = sheet.worksheet("Agenda Final")
-    last_update = ws.acell("H1").value
-    st.info(last_update)
+    st.info(ws.acell("H1").value)
 except:
     st.warning("Sin actualizaciones aún")
