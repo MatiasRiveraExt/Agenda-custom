@@ -8,10 +8,10 @@ from datetime import datetime
 # CONFIG
 # =========================
 st.set_page_config(page_title="Agenda PRO", layout="wide")
-st.title("📊 Sistema de Agenda Automática PRO")
+st.title("📊 Sistema Agenda Automática PRO")
 
 # =========================
-# AUTH GOOGLE SHEETS
+# GOOGLE AUTH
 # =========================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -31,45 +31,45 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =========================
-# MOSTRAR HOJAS
+# HOJAS DISPONIBLES
 # =========================
-worksheets = sheet.worksheets()
-st.write("📄 Hojas disponibles:", [ws.title for ws in worksheets])
+st.write("📄 Hojas:", [ws.title for ws in sheet.worksheets()])
 
 # =========================
-# FUNCIÓN DE LECTURA
+# NORMALIZADOR DE COLUMNAS (CLAVE)
 # =========================
-def load_sheet(name):
-    ws = sheet.worksheet(name)
-    return pd.DataFrame(ws.get_all_records())
+def normalize_columns(df):
+    df = df.copy()
+    df.columns = df.columns.str.strip()
+
+    mapping = {
+        "PO Number": "Order Number",
+        "Num Order": "Order Number",
+        "O/C Cliente": "Order Number",
+        "Order": "Order Number",
+        "Order ID": "Order Number"
+    }
+
+    df = df.rename(columns=mapping)
+    return df
 
 # =========================
-# 🔥 FUNCIÓN FIX DEFINITIVA (ANTI ERROR JSON)
+# UPLOAD SAFE A SHEETS
 # =========================
 def upload_to_sheet(df, sheet_name):
     ws = sheet.worksheet(sheet_name)
     ws.clear()
 
-    df_clean = df.copy()
+    df = df.fillna("").astype(str)
 
-    # 🔥 eliminar NaN
-    df_clean = df_clean.fillna("")
-
-    # 🔥 convertir TODO a string seguro
-    df_clean = df_clean.astype(str)
-
-    # 🔥 construir matriz 2D limpia
-    values = []
-    values.append([str(col) for col in df_clean.columns])
-
-    for row in df_clean.values:
-        clean_row = [str(cell) for cell in row]
-        values.append(clean_row)
+    values = [df.columns.tolist()]
+    for row in df.values:
+        values.append([str(x) for x in row])
 
     ws.update(values)
 
 # =========================
-# SUBIDA DE ARCHIVOS
+# UI UPLOAD
 # =========================
 st.subheader("📤 Subir archivos Excel")
 
@@ -78,7 +78,7 @@ track_file = st.file_uploader("Track", type=["xlsx"])
 maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 # =========================
-# PROCESO PRINCIPAL
+# PROCESO
 # =========================
 if st.button("🚀 Generar Agenda PRO"):
 
@@ -87,20 +87,31 @@ if st.button("🚀 Generar Agenda PRO"):
         st.stop()
 
     # =========================
-    # LEER EXCEL
+    # LECTURA
     # =========================
     ordenes = pd.read_excel(ordenes_file)
     track = pd.read_excel(track_file)
     maestro = pd.read_excel(maestro_file)
 
-    st.success("📥 Archivos cargados correctamente")
+    st.success("📥 Archivos cargados")
 
     # =========================
-    # LIMPIEZA COLUMNAS
+    # LIMPIEZA
     # =========================
-    ordenes.columns = ordenes.columns.str.strip()
-    track.columns = track.columns.str.strip()
-    maestro.columns = maestro.columns.str.strip()
+    ordenes = normalize_columns(ordenes)
+    track = normalize_columns(track)
+    maestro = normalize_columns(maestro)
+
+    # =========================
+    # VALIDACIÓN
+    # =========================
+    required = "Order Number"
+
+    for name, df in [("Ordenes", ordenes), ("Track", track), ("Maestro", maestro)]:
+        if required not in df.columns:
+            st.error(f"❌ Falta 'Order Number' en {name}")
+            st.write(df.columns)
+            st.stop()
 
     # =========================
     # SUBIR A SHEETS
@@ -112,7 +123,7 @@ if st.button("🚀 Generar Agenda PRO"):
     st.success("☁️ Datos subidos a Google Sheets")
 
     # =========================
-    # MERGE
+    # MERGE SEGURO
     # =========================
     df = ordenes.merge(track, on="Order Number", how="left")
     df = df.merge(maestro, on="Order Number", how="left")
@@ -121,20 +132,22 @@ if st.button("🚀 Generar Agenda PRO"):
     df = df.drop_duplicates()
 
     # =========================
-    # GUARDAR AGENDA
+    # GUARDAR AGENDA FINAL
     # =========================
     upload_to_sheet(df, "Agenda Final")
 
     # timestamp
     ws = sheet.worksheet("Agenda Final")
-    ws.update("H1", [[f"Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+    ws.update("H1", [[
+        f"Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    ]])
 
     st.success("🎯 Agenda generada correctamente")
 
     st.dataframe(df)
 
 # =========================
-# TIMESTAMP DISPLAY
+# TIMESTAMP VIEW
 # =========================
 try:
     ws = sheet.worksheet("Agenda Final")
