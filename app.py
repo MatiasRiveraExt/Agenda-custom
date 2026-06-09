@@ -25,7 +25,7 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-SHEET_ID = "PEGA_AQUI_TU_SHEET_ID"
+SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 sheet = client.open_by_key(SHEET_ID)
 
 st.success("✅ Conectado a Google Sheets")
