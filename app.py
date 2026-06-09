@@ -8,13 +8,18 @@ import re
 # =====================================================
 # CONFIG
 # =====================================================
-st.set_page_config(page_title="Agenda PRO", layout="wide")
+
+st.set_page_config(
+    page_title="Agenda PRO",
+    layout="wide"
+)
 
 st.title("📊 Sistema Agenda Automática PRO")
 
 # =====================================================
-# GOOGLE AUTH
+# GOOGLE SHEETS AUTH
 # =====================================================
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -27,11 +32,21 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
+# 🔥 TU SHEET ID
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 
 sheet = client.open_by_key(SHEET_ID)
 
 st.success("✅ Conectado a Google Sheets")
+
+# =====================================================
+# MOSTRAR HOJAS
+# =====================================================
+
+st.write(
+    "📄 Hojas disponibles:",
+    [ws.title for ws in sheet.worksheets()]
+)
 
 # =====================================================
 # FUNCIONES
@@ -41,10 +56,13 @@ def clean_dataframe(df):
 
     df = df.copy()
 
+    # limpiar nombres
     df.columns = [str(c).strip() for c in df.columns]
 
+    # eliminar columnas vacías
     df = df.dropna(axis=1, how="all")
 
+    # eliminar duplicadas
     df = df.loc[:, ~pd.Index(df.columns).duplicated(keep="first")]
 
     return df
@@ -58,6 +76,7 @@ def extract_hour(text):
 
     text = str(text)
 
+    # buscar formato HH:MM
     match = re.search(r'(\d{1,2}:\d{2})', text)
 
     if match:
@@ -109,6 +128,10 @@ maestro_file = st.file_uploader(
 
 if st.button("🚀 Generar Agenda"):
 
+    # =================================================
+    # VALIDACIÓN
+    # =================================================
+
     if not ordenes_file or not track_file or not maestro_file:
 
         st.error("❌ Debes subir los 3 archivos")
@@ -138,7 +161,7 @@ if st.button("🚀 Generar Agenda"):
     maestro = clean_dataframe(maestro)
 
     # =================================================
-    # DEBUG
+    # DEBUG COLUMNAS
     # =================================================
 
     st.write("📌 Ordenes cols:")
@@ -151,16 +174,57 @@ if st.button("🚀 Generar Agenda"):
     st.write(maestro.columns.tolist())
 
     # =================================================
+    # VALIDAR COLUMNAS NECESARIAS
+    # =================================================
+
+    required_ordenes = [
+        "O/C Cliente",
+        "Fecha Entrega",
+        "Instrucciones"
+    ]
+
+    required_track = [
+        "PO Number",
+        "Delivered Quantity",
+        "Delivered Amount"
+    ]
+
+    required_maestro = [
+        "Num Order",
+        "Departamento",
+        "PD"
+    ]
+
+    for col in required_ordenes:
+
+        if col not in ordenes.columns:
+            st.error(f"❌ Falta '{col}' en Ordenes")
+            st.stop()
+
+    for col in required_track:
+
+        if col not in track.columns:
+            st.error(f"❌ Falta '{col}' en Track")
+            st.stop()
+
+    for col in required_maestro:
+
+        if col not in maestro.columns:
+            st.error(f"❌ Falta '{col}' en Maestro")
+            st.stop()
+
+    # =================================================
     # EXTRAER HORA
     # =================================================
 
-    ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
+    ordenes["Hora"] = ordenes["Instrucciones"].apply(
+        extract_hour
+    )
 
     # =================================================
-    # CREAR DATAFRAMES NECESARIOS
-    # =================================================
-
     # TRACK
+    # =================================================
+
     track_final = track[[
         "PO Number",
         "Delivered Quantity",
@@ -173,44 +237,89 @@ if st.button("🚀 Generar Agenda"):
         "Delivered Amount": "Monto"
     })
 
+    # =================================================
     # MAESTRO
+    # =================================================
+
     maestro_final = maestro[[
-        "Order Number",
+        "Num Order",
         "Departamento",
         "PD"
     ]].copy()
 
-    maestro_final = maestro_final.rename(columns={
-        "Order Number": "Num Order"
-    })
-
+    # =================================================
     # ORDENES
+    # =================================================
+
     ordenes_final = ordenes[[
-        "Order Number",
+        "O/C Cliente",
         "Fecha Entrega",
         "Hora"
     ]].copy()
 
     ordenes_final = ordenes_final.rename(columns={
-        "Order Number": "Num Order",
+        "O/C Cliente": "Num Order",
         "Fecha Entrega": "Fecha de entrega"
     })
+
+    # =================================================
+    # CONVERTIR KEYS A STRING
+    # =================================================
+
+    track_final["Num Order"] = (
+        track_final["Num Order"]
+        .astype(str)
+        .str.strip()
+    )
+
+    maestro_final["Num Order"] = (
+        maestro_final["Num Order"]
+        .astype(str)
+        .str.strip()
+    )
+
+    ordenes_final["Num Order"] = (
+        ordenes_final["Num Order"]
+        .astype(str)
+        .str.strip()
+    )
+
+    # =================================================
+    # DEBUG MERGE
+    # =================================================
+
+    st.write("📌 Track Final")
+    st.dataframe(track_final.head())
+
+    st.write("📌 Maestro Final")
+    st.dataframe(maestro_final.head())
+
+    st.write("📌 Ordenes Final")
+    st.dataframe(ordenes_final.head())
 
     # =================================================
     # MERGES
     # =================================================
 
-    df = track_final.merge(
-        maestro_final,
-        on="Num Order",
-        how="left"
-    )
+    try:
 
-    df = df.merge(
-        ordenes_final,
-        on="Num Order",
-        how="left"
-    )
+        df = track_final.merge(
+            maestro_final,
+            on="Num Order",
+            how="left"
+        )
+
+        df = df.merge(
+            ordenes_final,
+            on="Num Order",
+            how="left"
+        )
+
+    except Exception as e:
+
+        st.error(f"❌ Error merge: {e}")
+
+        st.stop()
 
     # =================================================
     # ORDEN FINAL
@@ -240,6 +349,8 @@ if st.button("🚀 Generar Agenda"):
 
     upload_to_sheet(df, "Agenda Final")
 
+    st.success("☁️ Agenda subida a Google Sheets")
+
     # =================================================
     # TIMESTAMP
     # =================================================
@@ -264,7 +375,7 @@ if st.button("🚀 Generar Agenda"):
     st.dataframe(df)
 
 # =====================================================
-# MOSTRAR TIMESTAMP
+# MOSTRAR ÚLTIMA ACTUALIZACIÓN
 # =====================================================
 
 try:
