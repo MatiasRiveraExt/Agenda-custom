@@ -28,15 +28,21 @@ def clean_cols(df):
 
 def find_col(df, keywords):
     for col in df.columns:
-        c = col.lower().replace(" ", "").replace("/", "")
+        col_clean = (
+            str(col).lower()
+            .replace(" ", "")
+            .replace("/", "")
+            .replace("_", "")
+            .replace("-", "")
+        )
         for k in keywords:
-            k2 = k.lower().replace(" ", "").replace("/", "")
-            if k2 in c:
+            k_clean = k.lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
+            if k_clean in col_clean:
                 return col
     return None
 
 # =========================
-# MAIN
+# RUN
 # =========================
 if st.button("🚀 Generar reporte"):
 
@@ -48,38 +54,47 @@ if st.button("🚀 Generar reporte"):
     # READ FILES
     # =========================
     track = pd.read_excel(track_file)
-    plan_raw = pd.read_excel(plan_file, sheet_name=None)  # 🔥 TODAS LAS HOJAS
+    plan_raw = pd.read_excel(plan_file, sheet_name=None)  # TODAS LAS HOJAS
     maestro = pd.read_excel(maestro_file)
 
     track = clean_cols(track)
     maestro = clean_cols(maestro)
 
     # =========================
-    # 🔥 ELEGIR HOJA MÁS GRANDE DEL PLAN
+    # DEBUG HOJAS
+    # =========================
+    st.write("📌 HOJAS DISPONIBLES EN PRONÓSTICO:")
+    st.write(list(plan_raw.keys()))
+
+    # =========================
+    # ELEGIR HOJA MÁS GRANDE
     # =========================
     plan = max(plan_raw.values(), key=lambda x: x.shape[0])
     plan = clean_cols(plan)
 
-    st.write("📌 Hoja seleccionada automáticamente:", plan.shape)
+    st.write("📌 HOJA SELECCIONADA (auto):", plan.shape)
+
+    st.write("📌 COLUMNAS PLAN:")
+    st.write(plan.columns.tolist())
 
     # =========================
-    # DETECTAR COLUMNAS TRACK
+    # TRACK COLUMNS
     # =========================
-    track_order = find_col(track, ["po number", "order", "po"])
+    track_order = find_col(track, ["po", "order", "orden"])
     track_qty = find_col(track, ["quantity", "delivered", "qty"])
     track_amt = find_col(track, ["amount", "monto"])
 
     # =========================
-    # DETECTAR PLAN
+    # PLAN COLUMNS (MEJORADO)
     # =========================
-    plan_order = find_col(plan, ["o/c", "cliente", "order", "po"])
+    plan_order = find_col(plan, ["occliente", "ocliente", "cliente", "order", "po"])
     plan_instr = find_col(plan, ["instru"])
     plan_date = find_col(plan, ["fecha"])
 
     # =========================
-    # DETECTAR MAESTRO
+    # MAESTRO COLUMNS
     # =========================
-    maestro_order = find_col(maestro, ["num order", "order"])
+    maestro_order = find_col(maestro, ["numorder", "order"])
     maestro_dep = find_col(maestro, ["depart"])
     maestro_pd = find_col(maestro, ["pd"])
 
@@ -92,6 +107,7 @@ if st.button("🚀 Generar reporte"):
 
     if not plan_order:
         st.error("❌ No se encontró Order en Pronóstico")
+        st.write("👉 Revisa columnas reales arriba")
         st.stop()
 
     if not maestro_order:
@@ -99,7 +115,7 @@ if st.button("🚀 Generar reporte"):
         st.stop()
 
     # =========================
-    # NORMALIZAR
+    # RENOMBRAR
     # =========================
     track = track.rename(columns={
         track_order: "Order Number",
@@ -148,10 +164,13 @@ if st.button("🚀 Generar reporte"):
 
     final = final.fillna("")
 
-    st.success("✅ Reporte generado")
+    st.success("✅ Reporte generado correctamente")
 
     st.dataframe(final.head(50))
 
+    # =========================
+    # DOWNLOAD
+    # =========================
     csv = final.to_csv(index=False).encode("utf-8")
 
     st.download_button(
