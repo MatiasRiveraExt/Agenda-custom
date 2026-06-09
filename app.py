@@ -11,7 +11,7 @@ st.set_page_config(page_title="Agenda PRO", layout="wide")
 st.title("📊 Sistema Agenda Automática PRO")
 
 # =========================
-# GOOGLE AUTH
+# AUTH GOOGLE SHEETS
 # =========================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -31,17 +31,31 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =========================
-# HOJAS DISPONIBLES
+# DEBUG HOJAS
 # =========================
 st.write("📄 Hojas:", [ws.title for ws in sheet.worksheets()])
 
 # =========================
-# NORMALIZADOR DE COLUMNAS (CLAVE)
+# LIMPIEZA CRÍTICA
 # =========================
-def normalize_columns(df):
+def clean_dataframe(df):
     df = df.copy()
+
+    # limpiar espacios
     df.columns = df.columns.str.strip()
 
+    # eliminar columnas duplicadas
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    # eliminar columnas totalmente vacías
+    df = df.dropna(axis=1, how="all")
+
+    return df
+
+# =========================
+# NORMALIZACIÓN COLUMNAS
+# =========================
+def normalize_columns(df):
     mapping = {
         "PO Number": "Order Number",
         "Num Order": "Order Number",
@@ -49,27 +63,27 @@ def normalize_columns(df):
         "Order": "Order Number",
         "Order ID": "Order Number"
     }
-
-    df = df.rename(columns=mapping)
-    return df
+    return df.rename(columns=mapping)
 
 # =========================
-# UPLOAD SAFE A SHEETS
+# UPLOAD A SHEETS (FIX FINAL)
 # =========================
 def upload_to_sheet(df, sheet_name):
     ws = sheet.worksheet(sheet_name)
     ws.clear()
 
-    df = df.fillna("").astype(str)
+    df = df.fillna("")
+    df = df.astype(str)
 
     values = [df.columns.tolist()]
+
     for row in df.values:
         values.append([str(x) for x in row])
 
     ws.update(values)
 
 # =========================
-# UI UPLOAD
+# UI
 # =========================
 st.subheader("📤 Subir archivos Excel")
 
@@ -96,11 +110,22 @@ if st.button("🚀 Generar Agenda PRO"):
     st.success("📥 Archivos cargados")
 
     # =========================
-    # LIMPIEZA
+    # LIMPIEZA GENERAL
     # =========================
+    ordenes = clean_dataframe(ordenes)
+    track = clean_dataframe(track)
+    maestro = clean_dataframe(maestro)
+
     ordenes = normalize_columns(ordenes)
     track = normalize_columns(track)
     maestro = normalize_columns(maestro)
+
+    # =========================
+    # DEBUG OPCIONAL
+    # =========================
+    st.write("Ordenes cols:", ordenes.columns.tolist())
+    st.write("Track cols:", track.columns.tolist())
+    st.write("Maestro cols:", maestro.columns.tolist())
 
     # =========================
     # VALIDACIÓN
@@ -125,14 +150,18 @@ if st.button("🚀 Generar Agenda PRO"):
     # =========================
     # MERGE SEGURO
     # =========================
-    df = ordenes.merge(track, on="Order Number", how="left")
-    df = df.merge(maestro, on="Order Number", how="left")
+    try:
+        df = ordenes.merge(track, on="Order Number", how="left")
+        df = df.merge(maestro, on="Order Number", how="left")
+    except Exception as e:
+        st.error(f"❌ Error en merge: {e}")
+        st.stop()
 
     df = df.fillna("")
     df = df.drop_duplicates()
 
     # =========================
-    # GUARDAR AGENDA FINAL
+    # GUARDAR AGENDA
     # =========================
     upload_to_sheet(df, "Agenda Final")
 
