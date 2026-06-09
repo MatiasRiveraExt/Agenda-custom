@@ -3,9 +3,7 @@ import pandas as pd
 import re
 
 st.set_page_config(page_title="Consolidador Excel PRO", layout="wide")
-st.title("📊 Consolidador Automático de Excel (PRO)")
-
-st.write("Sube los 3 archivos: SO Track, Pronóstico, Maestro")
+st.title("📊 Consolidador Automático Excel (Versión Robusta)")
 
 # =========================
 # UPLOAD
@@ -18,12 +16,7 @@ maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 # HELPERS
 # =========================
 def clean_cols(df):
-    df.columns = (
-        df.columns.astype(str)
-        .str.replace("\n", " ")
-        .str.replace("\xa0", " ")
-        .str.strip()
-    )
+    df.columns = df.columns.astype(str).str.strip().str.replace("\n", " ")
     return df
 
 def find_col(df, keywords):
@@ -35,18 +28,19 @@ def find_col(df, keywords):
                 return col
     return None
 
-def detect_header_row(df_raw):
+def detect_header(df_raw):
+    """
+    Busca fila donde aparece 'cliente', 'order' o 'oc'
+    """
     for i in range(len(df_raw)):
-        row = df_raw.iloc[i].astype(str).str.lower()
-        if any(
-            ("cliente" in x or "order" in x or "oc" in x or "po" in x)
-            for x in row
-        ):
+        row = df_raw.iloc[i].astype(str).str.lower().tolist()
+        text = " ".join(row)
+        if ("cliente" in text) or ("order" in text) or ("oc" in text) or ("po" in text):
             return i
     return 0
 
 # =========================
-# MAIN
+# RUN
 # =========================
 if st.button("🚀 Generar reporte"):
 
@@ -55,33 +49,34 @@ if st.button("🚀 Generar reporte"):
         st.stop()
 
     # =========================
-    # READ TRACK
+    # TRACK
     # =========================
     track = pd.read_excel(track_file)
     track = clean_cols(track)
 
     # =========================
-    # READ MAESTRO
+    # MAESTRO
     # =========================
     maestro = pd.read_excel(maestro_file)
     maestro = clean_cols(maestro)
 
     # =========================
-    # READ PLAN (RAW)
+    # PLAN (RAW)
     # =========================
     plan_raw = pd.read_excel(plan_file, sheet_name="Pronostico JUNIO", header=None)
 
-    st.write("📌 Vista cruda del pronóstico:")
+    st.write("📌 Vista cruda del pronóstico")
     st.dataframe(plan_raw.head(10))
 
     # =========================
-    # DETECT HEADER ROW
+    # DETECT HEADER REAL
     # =========================
-    header_row = detect_header_row(plan_raw)
+    header_row = detect_header(plan_raw)
+
     st.write("📌 Header detectado en fila:", header_row)
 
     # =========================
-    # RELOAD PLAN CORRECTLY
+    # RECONSTRUIR TABLA REAL
     # =========================
     plan = pd.read_excel(plan_file, sheet_name="Pronostico JUNIO", header=header_row)
     plan = clean_cols(plan)
@@ -90,28 +85,28 @@ if st.button("🚀 Generar reporte"):
     st.write(plan.columns.tolist())
 
     # =========================
-    # DETECT COLUMNS TRACK
+    # DETECTAR COLUMNAS TRACK
     # =========================
     track_order = find_col(track, ["po", "order", "orden"])
     track_qty = find_col(track, ["quantity", "delivered", "qty"])
     track_amt = find_col(track, ["amount", "monto"])
 
     # =========================
-    # DETECT COLUMNS PLAN
+    # DETECTAR COLUMNAS PLAN
     # =========================
-    plan_order = find_col(plan, ["occliente", "cliente", "order", "po", "oc"])
+    plan_order = find_col(plan, ["oc", "cliente", "order", "po"])
     plan_instr = find_col(plan, ["instru"])
     plan_date = find_col(plan, ["fecha"])
 
     # =========================
-    # DETECT COLUMNS MAESTRO
+    # DETECTAR MAESTRO
     # =========================
-    maestro_order = find_col(maestro, ["numorder", "order", "num"])
+    maestro_order = find_col(maestro, ["num", "order", "po"])
     maestro_dep = find_col(maestro, ["depart"])
     maestro_pd = find_col(maestro, ["pd"])
 
     # =========================
-    # VALIDATION
+    # VALIDACIÓN
     # =========================
     if not track_order:
         st.error("❌ No se encontró Order en SO Track")
@@ -119,6 +114,7 @@ if st.button("🚀 Generar reporte"):
 
     if not plan_order:
         st.error("❌ No se encontró Order en Pronóstico")
+        st.write("👉 Revisa columnas reales arriba")
         st.stop()
 
     if not maestro_order:
@@ -126,7 +122,7 @@ if st.button("🚀 Generar reporte"):
         st.stop()
 
     # =========================
-    # NORMALIZE TRACK
+    # NORMALIZAR TRACK
     # =========================
     track = track.rename(columns={
         track_order: "Order Number",
@@ -135,7 +131,7 @@ if st.button("🚀 Generar reporte"):
     })
 
     # =========================
-    # NORMALIZE PLAN
+    # NORMALIZAR PLAN
     # =========================
     plan = plan.rename(columns={
         plan_order: "Order Number",
@@ -144,7 +140,7 @@ if st.button("🚀 Generar reporte"):
     })
 
     # =========================
-    # NORMALIZE MAESTRO
+    # NORMALIZAR MAESTRO
     # =========================
     maestro = maestro.rename(columns={
         maestro_order: "Order Number",
@@ -153,7 +149,7 @@ if st.button("🚀 Generar reporte"):
     })
 
     # =========================
-    # EXTRACT HOUR
+    # EXTRAER HORA
     # =========================
     if "Instrucciones" in plan.columns:
         plan["Hora"] = plan["Instrucciones"].astype(str).str.extract(r'(\d{1,2}:\d{2})')
@@ -161,13 +157,18 @@ if st.button("🚀 Generar reporte"):
         plan["Hora"] = ""
 
     # =========================
-    # MERGE
+    # LIMPIEZA FINAL
+    # =========================
+    plan = plan.dropna(subset=["Order Number"])
+
+    # =========================
+    # MERGE SEGURO
     # =========================
     df = track.merge(plan, on="Order Number", how="left")
     df = df.merge(maestro, on="Order Number", how="left")
 
     # =========================
-    # FINAL OUTPUT
+    # RESULTADO FINAL
     # =========================
     final = df[[
         "Order Number",
