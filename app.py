@@ -56,16 +56,16 @@ if st.button("🚀 Generar reporte"):
     maestro_order = find_col(maestro, ["num order"])
 
     if not track_order:
-    st.error("❌ No se encontró 'PO Number' en SO Track")
+     st.error("❌ No se encontró 'PO Number' en SO Track")
 
     if not plan_order:
-    st.error("❌ No se encontró 'O/C Cliente' en Pronóstico")
+     st.error("❌ No se encontró 'O/C Cliente' en Pronóstico")
 
     if not maestro_order:
-    st.error("❌ No se encontró 'Num Order' en Órdenes Liberadas")
+     st.error("❌ No se encontró 'Num Order' en Órdenes Liberadas")
 
     if not track_order or not plan_order or not maestro_order:
-    st.stop()
+     st.stop()
 
     # =========================
     # STANDARDIZE
