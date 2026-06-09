@@ -55,9 +55,17 @@ if st.button("🚀 Generar reporte"):
     plan_order = find_col(plan, ["o/c cliente"])
     maestro_order = find_col(maestro, ["num order"])
 
+    if not track_order:
+    st.error("❌ No se encontró 'PO Number' en SO Track")
+
+    if not plan_order:
+    st.error("❌ No se encontró 'O/C Cliente' en Pronóstico")
+
+    if not maestro_order:
+    st.error("❌ No se encontró 'Num Order' en Órdenes Liberadas")
+
     if not track_order or not plan_order or not maestro_order:
-        st.error("❌ No se encontró la columna 'Order Number' en uno de los archivos")
-        st.stop()
+    st.stop()
 
     # =========================
     # STANDARDIZE
