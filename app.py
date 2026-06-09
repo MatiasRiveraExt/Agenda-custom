@@ -10,12 +10,8 @@ import re
 # CONFIG
 # =====================================================
 
-st.set_page_config(
-    page_title="Agenda PRO DB",
-    layout="wide"
-)
-
-st.title("📊 Agenda Automática PRO (Base de Datos)")
+st.set_page_config(page_title="Agenda PRO DB", layout="wide")
+st.title("📊 Agenda Automática PRO - Base de Datos")
 
 # =====================================================
 # GOOGLE SHEETS AUTH
@@ -34,7 +30,6 @@ creds = Credentials.from_service_account_info(
 client = gspread.authorize(creds)
 
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
-
 sheet = client.open_by_key(SHEET_ID)
 
 st.success("✅ Conectado a Google Sheets")
@@ -56,7 +51,6 @@ def extract_hour(text):
     match = re.search(r'(\d{1,2}:\d{2})', str(text))
     return match.group(1) if match else ""
 
-# 🔥 FIX CLAVE: NORMALIZAR OC
 def normalize_order(x):
     if pd.isna(x):
         return ""
@@ -79,6 +73,10 @@ def format_date(value):
     except:
         return value
 
+# =====================================================
+# EXPORT EXCEL
+# =====================================================
+
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -86,7 +84,7 @@ def to_excel(df):
     return output.getvalue()
 
 # =====================================================
-# 🔥 UPSERT REAL (BASE DE DATOS)
+# UPSERT (BASE DE DATOS REAL)
 # =====================================================
 
 def upsert_to_sheet(df, sheet_name):
@@ -134,17 +132,31 @@ def upsert_to_sheet(df, sheet_name):
     ws.update(values)
 
 # =====================================================
-# UI
+# LOAD DESDE SHEETS (DESCARGA SIN EXCEL)
 # =====================================================
 
-st.subheader("📤 Subir archivos Excel")
+def load_latest_from_sheet():
+
+    ws = sheet.worksheet("Agenda Final")
+    data = ws.get_all_records()
+
+    if not data:
+        return pd.DataFrame()
+
+    return pd.DataFrame(data)
+
+# =====================================================
+# UI - INPUTS
+# =====================================================
+
+st.subheader("📤 Generar nueva agenda")
 
 ordenes_file = st.file_uploader("Ordenes", type=["xlsx"])
 track_file = st.file_uploader("Track", type=["xlsx"])
 maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 # =====================================================
-# MAIN
+# GENERAR
 # =====================================================
 
 if st.button("🚀 Generar Agenda"):
@@ -153,48 +165,11 @@ if st.button("🚀 Generar Agenda"):
         st.error("❌ Faltan archivos")
         st.stop()
 
-    # =================================================
-    # LOAD
-    # =================================================
-
     ordenes = clean_dataframe(pd.read_excel(ordenes_file))
     track = clean_dataframe(pd.read_excel(track_file))
     maestro = clean_dataframe(pd.read_excel(maestro_file))
 
-    st.success("📥 Archivos cargados")
-
-    # =================================================
-    # VALIDACIÓN
-    # =================================================
-
-    required_ordenes = ["O/C Cliente", "Fecha Entrega", "Instrucciones"]
-    required_track = ["PO Number", "Sold to Name", "Delivered Quantity", "Delivered Amount"]
-    required_maestro = ["Num Order", "Departamento", "PD"]
-
-    for col in required_ordenes:
-        if col not in ordenes.columns:
-            st.error(f"❌ Falta {col}")
-            st.stop()
-
-    for col in required_track:
-        if col not in track.columns:
-            st.error(f"❌ Falta {col}")
-            st.stop()
-
-    for col in required_maestro:
-        if col not in maestro.columns:
-            st.error(f"❌ Falta {col}")
-            st.stop()
-
-    # =================================================
-    # HORA
-    # =================================================
-
     ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
-
-    # =================================================
-    # TRACK
-    # =================================================
 
     track_final = track[[
         "PO Number",
@@ -210,19 +185,11 @@ if st.button("🚀 Generar Agenda"):
         "Delivered Amount": "Monto"
     })
 
-    # =================================================
-    # MAESTRO
-    # =================================================
-
     maestro_final = maestro[[
         "Num Order",
         "Departamento",
         "PD"
     ]].copy()
-
-    # =================================================
-    # ORDENES
-    # =================================================
 
     ordenes_final = ordenes[[
         "O/C Cliente",
@@ -235,31 +202,15 @@ if st.button("🚀 Generar Agenda"):
         "Fecha Entrega": "Fecha de entrega"
     })
 
-    # =================================================
-    # NORMALIZAR KEYS
-    # =================================================
-
     track_final["Num Order"] = track_final["Num Order"].apply(normalize_order)
     maestro_final["Num Order"] = maestro_final["Num Order"].apply(normalize_order)
     ordenes_final["Num Order"] = ordenes_final["Num Order"].apply(normalize_order)
 
-    # =================================================
-    # MERGE
-    # =================================================
-
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
 
-    # =================================================
-    # FORMATO
-    # =================================================
-
     df["Monto"] = df["Monto"].apply(format_chilean_money)
     df["Fecha de entrega"] = df["Fecha de entrega"].apply(format_date)
-
-    # =================================================
-    # ORDEN FINAL
-    # =================================================
 
     df = df[[
         "Num Order",
@@ -272,47 +223,41 @@ if st.button("🚀 Generar Agenda"):
         "Monto"
     ]]
 
-    df = df.fillna("")
-    df = df.drop_duplicates()
-
-    # =================================================
-    # UPSERT A SHEETS (🔥 NUEVO SISTEMA)
-    # =================================================
+    df = df.fillna("").drop_duplicates()
 
     upsert_to_sheet(df, "Agenda Final")
 
-    st.success("☁️ Datos sincronizados (UPSERT)")
+    st.success("☁️ Agenda actualizada en base de datos")
 
-    # =================================================
-    # TIMESTAMP SOLO VISUAL (NO BD)
-    # =================================================
-
-    ws = sheet.worksheet("Agenda Final")
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.update("J1", [[f"Última actualización: {timestamp}"]])
-
-    # =================================================
-    # OUTPUT
-    # =================================================
-
-    st.success("🎯 Agenda generada correctamente")
     st.dataframe(df)
 
-    excel_data = to_excel(df)
-
     st.download_button(
-        "📥 Descargar Agenda Excel",
-        excel_data,
-        file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        "📥 Descargar Excel generado ahora",
+        to_excel(df),
+        file_name="Agenda_Nueva.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # =====================================================
-# STATUS
+# 🔥 DESCARGA DESDE BASE DE DATOS (SIN ARCHIVOS)
 # =====================================================
 
-try:
-    ws = sheet.worksheet("Agenda Final")
-    st.info(ws.acell("J1").value)
-except:
-    st.warning("Sin datos aún")
+st.divider()
+st.subheader("📦 Descargar última agenda (Base de Datos)")
+
+latest_df = load_latest_from_sheet()
+
+if latest_df.empty:
+    st.warning("No hay datos aún en la base")
+else:
+
+    st.success("📊 Última versión cargada desde Google Sheets")
+
+    st.dataframe(latest_df, use_container_width=True)
+
+    st.download_button(
+        "📥 Descargar última agenda",
+        to_excel(latest_df),
+        file_name=f"Agenda_DB_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
