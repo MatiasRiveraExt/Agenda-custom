@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+from io import BytesIO
 import re
 
 # =====================================================
@@ -32,7 +33,10 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-# 🔥 TU SHEET ID
+# =====================================================
+# GOOGLE SHEET ID
+# =====================================================
+
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 
 sheet = client.open_by_key(SHEET_ID)
@@ -56,13 +60,13 @@ def clean_dataframe(df):
 
     df = df.copy()
 
-    # limpiar nombres
+    # limpiar nombres columnas
     df.columns = [str(c).strip() for c in df.columns]
 
     # eliminar columnas vacías
     df = df.dropna(axis=1, how="all")
 
-    # eliminar duplicadas
+    # eliminar columnas duplicadas
     df = df.loc[:, ~pd.Index(df.columns).duplicated(keep="first")]
 
     return df
@@ -126,6 +130,27 @@ def upload_to_sheet(df, sheet_name):
         values.append([str(x) for x in row])
 
     ws.update(values)
+
+# =====================================================
+
+def to_excel(df):
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Agenda"
+        )
+
+    processed_data = output.getvalue()
+
+    return processed_data
 
 # =====================================================
 # UI
@@ -200,7 +225,7 @@ if st.button("🚀 Generar Agenda"):
     st.write(maestro.columns.tolist())
 
     # =================================================
-    # VALIDAR COLUMNAS NECESARIAS
+    # VALIDAR COLUMNAS
     # =================================================
 
     required_ordenes = [
@@ -225,19 +250,25 @@ if st.button("🚀 Generar Agenda"):
     for col in required_ordenes:
 
         if col not in ordenes.columns:
+
             st.error(f"❌ Falta '{col}' en Ordenes")
+
             st.stop()
 
     for col in required_track:
 
         if col not in track.columns:
+
             st.error(f"❌ Falta '{col}' en Track")
+
             st.stop()
 
     for col in required_maestro:
 
         if col not in maestro.columns:
+
             st.error(f"❌ Falta '{col}' en Maestro")
+
             st.stop()
 
     # =================================================
@@ -260,10 +291,15 @@ if st.button("🚀 Generar Agenda"):
     ]].copy()
 
     track_final = track_final.rename(columns={
+
         "PO Number": "Num Order",
+
         "Sold to Name": "Cliente",
+
         "Delivered Quantity": "Suma de Unidades",
+
         "Delivered Amount": "Monto"
+
     })
 
     # =================================================
@@ -287,12 +323,15 @@ if st.button("🚀 Generar Agenda"):
     ]].copy()
 
     ordenes_final = ordenes_final.rename(columns={
+
         "O/C Cliente": "Num Order",
+
         "Fecha Entrega": "Fecha de entrega"
+
     })
 
     # =================================================
-    # CONVERTIR KEYS A STRING
+    # NORMALIZAR KEYS
     # =================================================
 
     track_final["Num Order"] = (
@@ -314,7 +353,7 @@ if st.button("🚀 Generar Agenda"):
     )
 
     # =================================================
-    # DEBUG MERGE
+    # DEBUG
     # =================================================
 
     st.write("📌 Track Final")
@@ -327,7 +366,7 @@ if st.button("🚀 Generar Agenda"):
     st.dataframe(ordenes_final.head())
 
     # =================================================
-    # MERGES
+    # MERGE
     # =================================================
 
     try:
@@ -367,14 +406,23 @@ if st.button("🚀 Generar Agenda"):
     # =================================================
 
     df = df[[
+
         "Num Order",
+
         "Cliente",
+
         "Departamento",
+
         "PD",
+
         "Suma de Unidades",
+
         "Fecha de entrega",
+
         "Hora",
+
         "Monto"
+
     ]]
 
     # =================================================
@@ -415,6 +463,24 @@ if st.button("🚀 Generar Agenda"):
     st.success("🎯 Agenda generada correctamente")
 
     st.dataframe(df)
+
+    # =================================================
+    # DESCARGAR EXCEL
+    # =================================================
+
+    excel_data = to_excel(df)
+
+    st.download_button(
+
+        label="📥 Descargar Agenda Excel",
+
+        data=excel_data,
+
+        file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    )
 
 # =====================================================
 # MOSTRAR ÚLTIMA ACTUALIZACIÓN
