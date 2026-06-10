@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - FIX FINAL DEFINITIVO")
+st.title("📊 Agenda Automática PRO - SIN DUPLICADOS")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -69,17 +69,7 @@ def to_datetime(series):
     return pd.to_datetime(series, errors="coerce")
 
 # =====================================================
-# EXCEL EXPORT
-# =====================================================
-
-def to_excel(df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
-    return output.getvalue()
-
-# =====================================================
-# 🔥 SAFE GOOGLE SHEETS SERIALIZER (FIX DEFINITIVO)
+# SAFE SHEETS SERIALIZER
 # =====================================================
 
 def safe_gsheets_values(df):
@@ -98,6 +88,16 @@ def safe_gsheets_values(df):
         values.append(clean_row)
 
     return values
+
+# =====================================================
+# EXCEL EXPORT
+# =====================================================
+
+def to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    return output.getvalue()
 
 # =====================================================
 # LOAD SHEET
@@ -183,7 +183,13 @@ if st.button("🚀 Generar"):
     df["Fecha de entrega"] = to_datetime(df["Fecha de entrega"])
 
     # =================================================
-    # UPLOAD SAFE (FIX FINAL)
+    # 🔥 FIX DUPLICADOS (CLAVE NUEVA)
+    # =================================================
+
+    df = df.drop_duplicates(subset=["Num Order"], keep="last")
+
+    # =================================================
+    # UPLOAD A SHEETS
     # =================================================
 
     ws = sheet.worksheet("Agenda Final")
@@ -193,7 +199,7 @@ if st.button("🚀 Generar"):
 
     ws.update(values)
 
-    st.success("☁️ Base actualizada correctamente")
+    st.success("☁️ Base actualizada sin duplicados")
 
 # =====================================================
 # LOAD + FILTERS
