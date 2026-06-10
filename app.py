@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - Base Estable")
+st.title("📊 Agenda Automática PRO - Versión Estable")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -35,44 +35,13 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =====================================================
-# 🔥 LIMPIEZA REAL DE FECHAS (FIX DEFINITIVO)
+# HELPERS
 # =====================================================
 
 def safe_date(series):
-    """
-    Convierte cualquier cosa a datetime:
-    - strings
-    - fechas reales
-    - Excel serial numbers
-    - basura tipo 'N/A'
-    """
+    s = series.replace(["", " ", "N/A", "nan", "None"], pd.NaT)
+    return pd.to_datetime(s, errors="coerce")
 
-    s = series.copy()
-
-    # limpiar basura común
-    s = s.replace(["", " ", "N/A", "nan", "None"], pd.NaT)
-
-    # intento 1: parse normal
-    out = pd.to_datetime(s, errors="coerce", dayfirst=True)
-
-    # intento 2: Excel serial fallback
-    mask_num = s.astype(str).str.match(r"^\d{4,6}$", na=False)
-
-    if mask_num.any():
-        try:
-            out.loc[mask_num] = pd.to_datetime(
-                pd.to_numeric(s[mask_num], errors="coerce"),
-                unit="D",
-                origin="1899-12-30"
-            )
-        except:
-            pass
-
-    return out
-
-# =====================================================
-# HELPERS
-# =====================================================
 
 def clean_dataframe(df):
     df = df.copy()
@@ -94,8 +63,7 @@ def normalize_order(x):
         return ""
     x = str(x).strip()
     x = re.sub(r"\.0$", "", x)
-    x = x.lstrip("0")
-    return x
+    return x.lstrip("0")
 
 
 def format_money(value):
@@ -125,7 +93,7 @@ def load_latest():
 # UI
 # =====================================================
 
-st.subheader("📤 Actualización base")
+st.subheader("📤 Generar / Actualizar Agenda")
 
 ordenes_file = st.file_uploader("Ordenes", type=["xlsx"])
 track_file = st.file_uploader("Track", type=["xlsx"])
@@ -147,13 +115,32 @@ if st.button("🚀 Generar Agenda"):
 
     st.success("📥 Archivos cargados")
 
-    required = ["Created On", "PO Number", "Sold to Name", "Delivered Quantity", "Delivered Amount"]
+    # =================================================
+    # VALIDACIÓN BASE TRACK
+    # =================================================
+
+    required = [
+        "Created On",
+        "PO Number",
+        "Sold to Name",
+        "Delivered Quantity",
+        "Delivered Amount"
+    ]
+
+    for c in required:
+        if c not in track.columns:
+            st.error(f"Falta columna en Track: {c}")
+            st.stop()
+
+    # =================================================
+    # TRANSFORMACIÓN
+    # =================================================
 
     track_final = track[required].rename(columns={
         "Created On": "Fecha Creación",
         "PO Number": "Num Order",
         "Sold to Name": "Cliente",
-        "Delivered Quantity": "Unidades",
+        "Delivered Quantity": "Suma de Unidades",
         "Delivered Amount": "Monto"
     })
 
@@ -166,18 +153,18 @@ if st.button("🚀 Generar Agenda"):
 
     ordenes_final["Hora"] = ordenes_final["Instrucciones"].apply(extract_hour)
 
-    # normalize
+    # normalización
     for df_ in [track_final, maestro_final, ordenes_final]:
         df_["Num Order"] = df_["Num Order"].apply(normalize_order)
+
+    # =================================================
+    # MERGE
+    # =================================================
 
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
 
     df["Monto"] = df["Monto"].apply(format_money)
-
-    # =================================================
-    # 🔥 FECHAS ROBUSTAS
-    # =================================================
 
     df["Fecha Creación"] = safe_date(df["Fecha Creación"])
     df["Fecha de entrega"] = safe_date(df["Fecha de entrega"])
@@ -199,7 +186,6 @@ latest_df = load_latest()
 
 if not latest_df.empty:
 
-    # FIX FECHAS REAL
     latest_df["Fecha Creación"] = safe_date(latest_df["Fecha Creación"])
     latest_df["Fecha de entrega"] = safe_date(latest_df["Fecha de entrega"])
 
@@ -207,9 +193,11 @@ if not latest_df.empty:
 
     st.markdown("## 🎯 Filtros")
 
+    # CLIENTE
     clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
+    # FECHAS
     min_c, max_c = df_filtered["Fecha Creación"].min(), df_filtered["Fecha Creación"].max()
     min_e, max_e = df_filtered["Fecha de entrega"].min(), df_filtered["Fecha de entrega"].max()
 
@@ -218,11 +206,11 @@ if not latest_df.empty:
 
     incluir_null = st.checkbox("Incluir sin fecha entrega", True)
 
-    # CLIENTE
+    # CLIENTE FILTER
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
-    # CREACIÓN
+    # FECHA CREACIÓN
     start_c = pd.to_datetime(fecha_creacion[0])
     end_c = pd.to_datetime(fecha_creacion[1])
 
@@ -230,7 +218,7 @@ if not latest_df.empty:
         df_filtered["Fecha Creación"].between(start_c, end_c)
     ]
 
-    # ENTREGA (FIX FINAL REAL)
+    # FECHA ENTREGA
     start_e = pd.to_datetime(fecha_entrega[0])
     end_e = pd.to_datetime(fecha_entrega[1])
 
@@ -243,19 +231,23 @@ if not latest_df.empty:
     else:
         df_filtered = df_filtered[mask]
 
+    # =================================================
+    # FIX CRÍTICO: EVITA KEYERROR
+    # =================================================
+
     cols = [
         "Num Order",
         "Fecha Creación",
         "Cliente",
         "Departamento",
         "PD",
-        "Unidades",
+        "Suma de Unidades",
         "Fecha de entrega",
         "Hora",
         "Monto"
     ]
 
-    df_filtered = df_filtered[cols]
+    df_filtered = df_filtered.reindex(columns=cols)
 
     st.metric("Resultados", len(df_filtered))
     st.dataframe(df_filtered, use_container_width=True)
