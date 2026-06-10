@@ -71,9 +71,9 @@ def format_chilean_money(value):
         return value
 
 
-def parse_date(value):
+def parse_datetime(value):
     try:
-        return pd.to_datetime(value).date()
+        return pd.to_datetime(value, errors="coerce")
     except:
         return pd.NaT
 
@@ -106,7 +106,7 @@ track_file = st.file_uploader("Track", type=["xlsx"])
 maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 # =====================================================
-# GENERAR AGENDA
+# GENERAR
 # =====================================================
 
 if st.button("🚀 Generar Agenda"):
@@ -158,8 +158,12 @@ if st.button("🚀 Generar Agenda"):
 
     df["Monto"] = df["Monto"].apply(format_chilean_money)
 
-    df["Fecha Creación"] = df["Fecha Creación"].apply(parse_date)
-    df["Fecha de entrega"] = df["Fecha de entrega"].apply(parse_date)
+    # =================================================
+    # 🔥 FECHAS COMO DATETIME REAL (FIX FINAL)
+    # =================================================
+
+    df["Fecha Creación"] = df["Fecha Creación"].apply(parse_datetime)
+    df["Fecha de entrega"] = df["Fecha de entrega"].apply(parse_datetime)
 
     df = df.fillna("")
 
@@ -181,20 +185,19 @@ latest_df = load_latest_from_sheet()
 if not latest_df.empty:
 
     # =================================================
-    # FIX CRÍTICO FECHAS (SEPARADO PARA FILTRO)
+    # FIX: todo datetime limpio
     # =================================================
 
     latest_df["Fecha Creación"] = pd.to_datetime(
         latest_df["Fecha Creación"],
         errors="coerce"
-    ).dt.date
+    )
 
     latest_df["Fecha de entrega"] = pd.to_datetime(
         latest_df["Fecha de entrega"],
         errors="coerce"
-    ).dt.date
+    )
 
-    # copia segura para filtros
     df_filtered = latest_df.copy()
 
     st.markdown("## 🎯 Filtros")
@@ -203,29 +206,15 @@ if not latest_df.empty:
     clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
-    # FECHA CREACIÓN (SAFE)
-    fechas_c = df_filtered["Fecha Creación"].dropna()
+    # FECHAS SEGURAS
+    min_c = df_filtered["Fecha Creación"].min()
+    max_c = df_filtered["Fecha Creación"].max()
 
-    if len(fechas_c) > 0:
-        min_c = fechas_c.min()
-        max_c = fechas_c.max()
-    else:
-        min_c = datetime.today().date()
-        max_c = datetime.today().date()
+    min_e = df_filtered["Fecha de entrega"].min()
+    max_e = df_filtered["Fecha de entrega"].max()
 
-    fecha_creacion = st.date_input("Fecha creación", value=(min_c, max_c))
-
-    # FECHA ENTREGA (SAFE FIX REAL)
-    fechas_e = df_filtered["Fecha de entrega"].dropna()
-
-    if len(fechas_e) > 0:
-        min_e = fechas_e.min()
-        max_e = fechas_e.max()
-    else:
-        min_e = datetime.today().date()
-        max_e = datetime.today().date()
-
-    fecha_entrega = st.date_input("Fecha entrega", value=(min_e, max_e))
+    fecha_creacion = st.date_input("Fecha creación", value=(min_c.date(), max_c.date()))
+    fecha_entrega = st.date_input("Fecha entrega", value=(min_e.date(), max_e.date()))
 
     incluir_null = st.checkbox("Incluir sin fecha de entrega", True)
 
@@ -237,11 +226,12 @@ if not latest_df.empty:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
     # =================================================
-    # FILTRO FECHA CREACIÓN
+    # FILTRO FECHA CREACIÓN (FIX REAL)
     # =================================================
 
     if isinstance(fecha_creacion, tuple):
-        start, end = fecha_creacion
+        start = pd.to_datetime(fecha_creacion[0])
+        end = pd.to_datetime(fecha_creacion[1])
 
         df_filtered = df_filtered[
             (df_filtered["Fecha Creación"] >= start) &
@@ -249,15 +239,16 @@ if not latest_df.empty:
         ]
 
     # =================================================
-    # 🔥 FIX CRÍTICO FECHA ENTREGA
+    # 🔥 FILTRO FECHA ENTREGA (FIX DEFINITIVO)
     # =================================================
 
     if isinstance(fecha_entrega, tuple):
-        start, end = fecha_entrega
+        start = pd.to_datetime(fecha_entrega[0])
+        end = pd.to_datetime(fecha_entrega[1])
 
         entrega = df_filtered["Fecha de entrega"]
 
-        mask_rango = (
+        mask = (
             entrega.notna() &
             (entrega >= start) &
             (entrega <= end)
@@ -265,10 +256,10 @@ if not latest_df.empty:
 
         if incluir_null:
             df_filtered = df_filtered[
-                entrega.isna() | mask_rango
+                entrega.isna() | mask
             ]
         else:
-            df_filtered = df_filtered[mask_rango]
+            df_filtered = df_filtered[mask]
 
     # =================================================
     # OUTPUT
