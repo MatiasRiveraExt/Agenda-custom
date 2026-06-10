@@ -272,6 +272,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     ]
 
     required_track = [
+        "Created On",
         "PO Number",
         "Sold to Name",
         "Delivered Quantity",
@@ -315,6 +316,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     # =================================================
 
     track_final = track[[
+        "Created On",
         "PO Number",
         "Sold to Name",
         "Delivered Quantity",
@@ -322,6 +324,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     ]].copy()
 
     track_final = track_final.rename(columns={
+        "Created On": "Fecha Creación",
         "PO Number": "Num Order",
         "Sold to Name": "Cliente",
         "Delivered Quantity": "Suma de Unidades",
@@ -416,11 +419,16 @@ if st.button("🚀 Actualizar y Generar Agenda"):
         format_date
     )
 
+    df["Fecha Creación"] = df["Fecha Creación"].apply(
+        format_date
+    )
+
     # =================================================
     # COLUMNAS FINALES
     # =================================================
 
     df = df[[
+        "Fecha Creación",
         "Num Order",
         "Cliente",
         "Departamento",
@@ -442,7 +450,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     st.success("☁️ Base histórica actualizada")
 
     # =================================================
-    # 🔥 RECARGAR TODA LA BASE
+    # RECARGAR TODA LA BASE
     # =================================================
 
     df = load_latest_from_sheet()
@@ -460,7 +468,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     )
 
     ws.update(
-        "J1",
+        "K1",
         [[f"Última actualización: {timestamp}"]]
     )
 
@@ -536,7 +544,7 @@ try:
 
     ws = sheet.worksheet("Agenda Final")
 
-    status = ws.acell("J1").value
+    status = ws.acell("K1").value
 
     if status:
         st.info(status)
