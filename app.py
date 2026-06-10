@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - FIX FINAL FECHAS")
+st.title("📊 Agenda Automática PRO - FIX FINAL GSheets")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -65,18 +65,38 @@ def format_money(v):
         return v
 
 
+def to_datetime(series):
+    return pd.to_datetime(series, errors="coerce")
+
+# =====================================================
+# 🔥 CLEAN FINAL PARA GOOGLE SHEETS (FIX CLAVE)
+# =====================================================
+
+def clean_for_gsheet(df):
+    df = df.copy()
+
+    # reemplazar NaT / NaN primero
+    df = df.fillna("")
+
+    # convertir todo a string puro (evita Timestamp/numpy issues)
+    for col in df.columns:
+        df[col] = df[col].astype(str)
+
+    # limpiar basura común
+    df = df.replace({
+        "nan": "",
+        "NaT": "",
+        "None": ""
+    })
+
+    return df
+
+
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     return output.getvalue()
-
-# =====================================================
-# FECHAS ROBUSTAS (FIX REAL)
-# =====================================================
-
-def to_datetime(series):
-    return pd.to_datetime(series, errors="coerce")
 
 # =====================================================
 # LOAD SHEET
@@ -159,17 +179,27 @@ if st.button("🚀 Generar"):
     df["Monto"] = df["Monto"].apply(format_money)
 
     # =================================================
-    # FECHAS (SAFE)
+    # FECHAS SEGURAS
     # =================================================
 
     df["Fecha Creación"] = to_datetime(df["Fecha Creación"])
     df["Fecha de entrega"] = to_datetime(df["Fecha de entrega"])
 
+    # =================================================
+    # SUBIDA SEGURA A SHEETS (FIX REAL)
+    # =================================================
+
     ws = sheet.worksheet("Agenda Final")
     ws.clear()
-    ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
 
-    st.success("☁️ Base actualizada")
+    clean_df = clean_for_gsheet(df)
+
+    ws.update(
+        [clean_df.columns.tolist()] +
+        clean_df.values.tolist()
+    )
+
+    st.success("☁️ Base actualizada correctamente")
 
 # =====================================================
 # LOAD + FILTERS
@@ -197,7 +227,7 @@ if not latest_df.empty:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
     # =================================================
-    # FECHAS SEGURAS (FIX STRPTIME ELIMINADO)
+    # FECHA CREACIÓN (FILTRO SIMPLE Y ESTABLE)
     # =================================================
 
     fechas = pd.to_datetime(df_filtered["Fecha Creación"], errors="coerce").dropna()
