@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - FIX NaT")
+st.title("📊 Agenda Automática PRO - FIX FINAL FILTROS")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -71,19 +71,12 @@ def to_excel(df):
         df.to_excel(writer, index=False)
     return output.getvalue()
 
-
-def to_date(series):
-    return pd.to_datetime(series, errors="coerce").dt.date
-
 # =====================================================
-# SAFE MIN/MAX (🔥 FIX CLAVE)
+# 🔥 FECHAS NORMALIZADAS (CLAVE DEL FIX)
 # =====================================================
 
-def safe_min_max(series):
-    clean = series.dropna()
-    if clean.empty:
-        return None, None
-    return clean.min(), clean.max()
+def to_datetime(series):
+    return pd.to_datetime(series, errors="coerce")
 
 # =====================================================
 # LOAD SHEET
@@ -165,8 +158,12 @@ if st.button("🚀 Generar"):
 
     df["Monto"] = df["Monto"].apply(format_money)
 
-    df["Fecha Creación"] = to_date(df["Fecha Creación"])
-    df["Fecha de entrega"] = to_date(df["Fecha de entrega"])
+    # =================================================
+    # 🔥 FECHAS UNIFICADAS (FIX REAL)
+    # =================================================
+
+    df["Fecha Creación"] = to_datetime(df["Fecha Creación"])
+    df["Fecha de entrega"] = to_datetime(df["Fecha de entrega"])
 
     ws = sheet.worksheet("Agenda Final")
     ws.clear()
@@ -187,8 +184,9 @@ if not latest_df.empty:
 
     latest_df = normalize_columns(latest_df)
 
-    latest_df["Fecha Creación"] = to_date(latest_df["Fecha Creación"])
-    latest_df["Fecha de entrega"] = to_date(latest_df["Fecha de entrega"])
+    # 🔥 ASEGURAR DATETIME REAL
+    latest_df["Fecha Creación"] = to_datetime(latest_df["Fecha Creación"])
+    latest_df["Fecha de entrega"] = to_datetime(latest_df["Fecha de entrega"])
 
     df_filtered = latest_df.copy()
 
@@ -199,48 +197,53 @@ if not latest_df.empty:
     clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
+    if clientes_sel:
+        df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
+
     # =================================================
-    # 🔥 SAFE MIN/MAX (FIX ERROR)
+    # 🔥 MIN/MAX SIN NaT PROBLEMÁTICO
     # =================================================
 
-    min_c, max_c = safe_min_max(df_filtered["Fecha Creación"])
-    min_e, max_e = safe_min_max(df_filtered["Fecha de entrega"])
+    fecha_c_clean = df_filtered["Fecha Creación"].dropna()
+    fecha_e_clean = df_filtered["Fecha de entrega"].dropna()
 
-    if min_c is None or min_e is None:
-        st.warning("No hay suficientes fechas válidas")
+    if fecha_c_clean.empty or fecha_e_clean.empty:
+        st.warning("No hay suficientes datos de fechas")
         st.stop()
 
-    fecha_creacion = st.date_input("Fecha creación", value=(min_c, max_c))
-    fecha_entrega = st.date_input("Fecha entrega", value=(min_e, max_e))
+    min_c, max_c = fecha_c_clean.min(), fecha_c_clean.max()
+    min_e, max_e = fecha_e_clean.min(), fecha_e_clean.max()
+
+    fecha_creacion = st.date_input("Fecha creación", value=(min_c.date(), max_c.date()))
+    fecha_entrega = st.date_input("Fecha entrega", value=(min_e.date(), max_e.date()))
 
     incluir_null = st.checkbox("Incluir sin fecha entrega", True)
 
     # =================================================
-    # FILTRO CLIENTE
+    # 🔥 CONVERTIR INPUT A DATETIME (CLAVE FINAL)
     # =================================================
 
-    if clientes_sel:
-        df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
+    start_c = pd.to_datetime(fecha_creacion[0])
+    end_c = pd.to_datetime(fecha_creacion[1])
+
+    start_e = pd.to_datetime(fecha_entrega[0])
+    end_e = pd.to_datetime(fecha_entrega[1])
 
     # =================================================
     # FILTRO FECHA CREACIÓN
     # =================================================
 
-    start_c, end_c = fecha_creacion
-
     df_filtered = df_filtered[
-        (df_filtered["Fecha Creación"] >= start_c) &
-        (df_filtered["Fecha Creación"] <= end_c)
+        df_filtered["Fecha Creación"].between(start_c, end_c)
     ]
 
     # =================================================
     # FILTRO FECHA ENTREGA
     # =================================================
 
-    start_e, end_e = fecha_entrega
     entrega = df_filtered["Fecha de entrega"]
 
-    mask = (entrega >= start_e) & (entrega <= end_e)
+    mask = entrega.between(start_e, end_e)
 
     if incluir_null:
         df_filtered = df_filtered[mask | entrega.isna()]
