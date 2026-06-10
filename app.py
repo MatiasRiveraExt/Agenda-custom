@@ -96,45 +96,6 @@ def load_latest_from_sheet():
     return pd.DataFrame(data)
 
 # =====================================================
-# UPSERT
-# =====================================================
-
-def upsert_to_sheet(df_new, sheet_name):
-
-    ws = sheet.worksheet(sheet_name)
-    existing = ws.get_all_records()
-
-    if len(existing) == 0:
-        final_df = df_new.copy()
-    else:
-        existing_df = pd.DataFrame(existing)
-
-        existing_df["Num Order"] = existing_df["Num Order"].apply(normalize_order)
-        df_new["Num Order"] = df_new["Num Order"].apply(normalize_order)
-
-        final_df = pd.concat([existing_df, df_new], ignore_index=True)
-        final_df = final_df.drop_duplicates(subset="Num Order", keep="last")
-
-    final_df = final_df.fillna("").astype(str)
-
-    desired_order = [
-        "Num Order",
-        "Fecha Creación",
-        "Cliente",
-        "Departamento",
-        "PD",
-        "Suma de Unidades",
-        "Fecha de entrega",
-        "Hora",
-        "Monto"
-    ]
-
-    final_df = final_df[[c for c in desired_order if c in final_df.columns]]
-
-    ws.clear()
-    ws.update([final_df.columns.tolist()] + final_df.values.tolist())
-
-# =====================================================
 # UI INPUT
 # =====================================================
 
@@ -145,7 +106,7 @@ track_file = st.file_uploader("Track", type=["xlsx"])
 maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 # =====================================================
-# GENERAR
+# GENERAR AGENDA
 # =====================================================
 
 if st.button("🚀 Generar Agenda"):
@@ -159,10 +120,6 @@ if st.button("🚀 Generar Agenda"):
     maestro = clean_dataframe(pd.read_excel(maestro_file))
 
     st.success("📥 Archivos cargados")
-
-    # =================================================
-    # VALIDACIÓN
-    # =================================================
 
     required = ["Created On", "PO Number", "Sold to Name", "Delivered Quantity", "Delivered Amount"]
 
@@ -206,7 +163,9 @@ if st.button("🚀 Generar Agenda"):
 
     df = df.fillna("")
 
-    upsert_to_sheet(df, "Agenda Final")
+    ws = sheet.worksheet("Agenda Final")
+    ws.clear()
+    ws.update([df.columns.tolist()] + df.values.tolist())
 
     st.success("☁️ Base actualizada")
 
@@ -221,20 +180,31 @@ latest_df = load_latest_from_sheet()
 
 if not latest_df.empty:
 
-    # FIX SEGURO
-    latest_df["Fecha Creación"] = pd.to_datetime(latest_df["Fecha Creación"], errors="coerce").dt.date
-    latest_df["Fecha de entrega"] = pd.to_datetime(latest_df["Fecha de entrega"], errors="coerce").dt.date
+    # =================================================
+    # FIX CRÍTICO FECHAS (SEPARADO PARA FILTRO)
+    # =================================================
+
+    latest_df["Fecha Creación"] = pd.to_datetime(
+        latest_df["Fecha Creación"],
+        errors="coerce"
+    ).dt.date
+
+    latest_df["Fecha de entrega"] = pd.to_datetime(
+        latest_df["Fecha de entrega"],
+        errors="coerce"
+    ).dt.date
+
+    # copia segura para filtros
+    df_filtered = latest_df.copy()
 
     st.markdown("## 🎯 Filtros")
 
-    clientes = latest_df["Cliente"].dropna().unique().tolist()
+    # CLIENTE
+    clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
-    # ===============================
-    # FIX MIN/MAX SEGURO
-    # ===============================
-
-    fechas_c = latest_df["Fecha Creación"].dropna()
+    # FECHA CREACIÓN (SAFE)
+    fechas_c = df_filtered["Fecha Creación"].dropna()
 
     if len(fechas_c) > 0:
         min_c = fechas_c.min()
@@ -243,7 +213,10 @@ if not latest_df.empty:
         min_c = datetime.today().date()
         max_c = datetime.today().date()
 
-    fechas_e = latest_df["Fecha de entrega"].dropna()
+    fecha_creacion = st.date_input("Fecha creación", value=(min_c, max_c))
+
+    # FECHA ENTREGA (SAFE FIX REAL)
+    fechas_e = df_filtered["Fecha de entrega"].dropna()
 
     if len(fechas_e) > 0:
         min_e = fechas_e.min()
@@ -252,37 +225,54 @@ if not latest_df.empty:
         min_e = datetime.today().date()
         max_e = datetime.today().date()
 
-    fecha_creacion = st.date_input("Fecha creación", value=(min_c, max_c))
     fecha_entrega = st.date_input("Fecha entrega", value=(min_e, max_e))
 
     incluir_null = st.checkbox("Incluir sin fecha de entrega", True)
 
-    df_filtered = latest_df.copy()
+    # =================================================
+    # FILTRO CLIENTE
+    # =================================================
 
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
+    # =================================================
+    # FILTRO FECHA CREACIÓN
+    # =================================================
+
     if isinstance(fecha_creacion, tuple):
+        start, end = fecha_creacion
+
         df_filtered = df_filtered[
-            (df_filtered["Fecha Creación"] >= fecha_creacion[0]) &
-            (df_filtered["Fecha Creación"] <= fecha_creacion[1])
+            (df_filtered["Fecha Creación"] >= start) &
+            (df_filtered["Fecha Creación"] <= end)
         ]
 
+    # =================================================
+    # 🔥 FIX CRÍTICO FECHA ENTREGA
+    # =================================================
+
     if isinstance(fecha_entrega, tuple):
+        start, end = fecha_entrega
+
+        entrega = df_filtered["Fecha de entrega"]
+
+        mask_rango = (
+            entrega.notna() &
+            (entrega >= start) &
+            (entrega <= end)
+        )
 
         if incluir_null:
             df_filtered = df_filtered[
-                df_filtered["Fecha de entrega"].isna() |
-                (
-                    (df_filtered["Fecha de entrega"] >= fecha_entrega[0]) &
-                    (df_filtered["Fecha de entrega"] <= fecha_entrega[1])
-                )
+                entrega.isna() | mask_rango
             ]
         else:
-            df_filtered = df_filtered[
-                (df_filtered["Fecha de entrega"] >= fecha_entrega[0]) &
-                (df_filtered["Fecha de entrega"] <= fecha_entrega[1])
-            ]
+            df_filtered = df_filtered[mask_rango]
+
+    # =================================================
+    # OUTPUT
+    # =================================================
 
     cols = [
         "Num Order",
@@ -302,7 +292,7 @@ if not latest_df.empty:
     st.dataframe(df_filtered, use_container_width=True)
 
     st.download_button(
-        "Descargar agenda",
+        "Descargar agenda filtrada",
         to_excel(df_filtered),
         file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
