@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - FIX FINAL FECHAS")
+st.title("📊 Agenda Automática PRO - FIX NaT")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -71,12 +71,19 @@ def to_excel(df):
         df.to_excel(writer, index=False)
     return output.getvalue()
 
-# =====================================================
-# FECHA FIX DEFINITIVO (CLAVE)
-# =====================================================
 
 def to_date(series):
     return pd.to_datetime(series, errors="coerce").dt.date
+
+# =====================================================
+# SAFE MIN/MAX (🔥 FIX CLAVE)
+# =====================================================
+
+def safe_min_max(series):
+    clean = series.dropna()
+    if clean.empty:
+        return None, None
+    return clean.min(), clean.max()
 
 # =====================================================
 # LOAD SHEET
@@ -158,10 +165,6 @@ if st.button("🚀 Generar"):
 
     df["Monto"] = df["Monto"].apply(format_money)
 
-    # =================================================
-    # 🔥 FECHAS A DATE PURO (ESTO ARREGLA TODO)
-    # =================================================
-
     df["Fecha Creación"] = to_date(df["Fecha Creación"])
     df["Fecha de entrega"] = to_date(df["Fecha de entrega"])
 
@@ -184,21 +187,28 @@ if not latest_df.empty:
 
     latest_df = normalize_columns(latest_df)
 
-    # 🔥 OBLIGAR DATE PURO
     latest_df["Fecha Creación"] = to_date(latest_df["Fecha Creación"])
     latest_df["Fecha de entrega"] = to_date(latest_df["Fecha de entrega"])
 
     df_filtered = latest_df.copy()
 
     # =================================================
-    # FILTROS
+    # CLIENTES
     # =================================================
 
     clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
-    min_c, max_c = min(df_filtered["Fecha Creación"]), max(df_filtered["Fecha Creación"])
-    min_e, max_e = min(df_filtered["Fecha de entrega"]), max(df_filtered["Fecha de entrega"])
+    # =================================================
+    # 🔥 SAFE MIN/MAX (FIX ERROR)
+    # =================================================
+
+    min_c, max_c = safe_min_max(df_filtered["Fecha Creación"])
+    min_e, max_e = safe_min_max(df_filtered["Fecha de entrega"])
+
+    if min_c is None or min_e is None:
+        st.warning("No hay suficientes fechas válidas")
+        st.stop()
 
     fecha_creacion = st.date_input("Fecha creación", value=(min_c, max_c))
     fecha_entrega = st.date_input("Fecha entrega", value=(min_e, max_e))
@@ -206,14 +216,14 @@ if not latest_df.empty:
     incluir_null = st.checkbox("Incluir sin fecha entrega", True)
 
     # =================================================
-    # CLIENTE FILTER
+    # FILTRO CLIENTE
     # =================================================
 
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
     # =================================================
-    # FECHA CREACIÓN (DATE PURO)
+    # FILTRO FECHA CREACIÓN
     # =================================================
 
     start_c, end_c = fecha_creacion
@@ -224,7 +234,7 @@ if not latest_df.empty:
     ]
 
     # =================================================
-    # FECHA ENTREGA (FIX FINAL REAL)
+    # FILTRO FECHA ENTREGA
     # =================================================
 
     start_e, end_e = fecha_entrega
