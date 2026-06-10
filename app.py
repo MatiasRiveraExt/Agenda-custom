@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - Versión Estable")
+st.title("📊 Agenda Automática PRO - FIX DEFINITIVO")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -35,13 +35,31 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =====================================================
-# HELPERS
+# 🔥 NORMALIZADOR REAL DE COLUMNAS (CLAVE)
+# =====================================================
+
+def normalize_columns(df):
+    df = df.copy()
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+        .str.replace("\n", "", regex=False)
+        .str.replace("\t", "", regex=False)
+    )
+    return df
+
+# =====================================================
+# FECHAS ROBUSTAS
 # =====================================================
 
 def safe_date(series):
     s = series.replace(["", " ", "N/A", "nan", "None"], pd.NaT)
     return pd.to_datetime(s, errors="coerce")
 
+# =====================================================
+# HELPERS
+# =====================================================
 
 def clean_dataframe(df):
     df = df.copy()
@@ -93,7 +111,7 @@ def load_latest():
 # UI
 # =====================================================
 
-st.subheader("📤 Generar / Actualizar Agenda")
+st.subheader("📤 Generar Agenda")
 
 ordenes_file = st.file_uploader("Ordenes", type=["xlsx"])
 track_file = st.file_uploader("Track", type=["xlsx"])
@@ -116,7 +134,7 @@ if st.button("🚀 Generar Agenda"):
     st.success("📥 Archivos cargados")
 
     # =================================================
-    # VALIDACIÓN BASE TRACK
+    # VALIDACIÓN
     # =================================================
 
     required = [
@@ -129,7 +147,7 @@ if st.button("🚀 Generar Agenda"):
 
     for c in required:
         if c not in track.columns:
-            st.error(f"Falta columna en Track: {c}")
+            st.error(f"Falta en Track: {c}")
             st.stop()
 
     # =================================================
@@ -153,14 +171,11 @@ if st.button("🚀 Generar Agenda"):
 
     ordenes_final["Hora"] = ordenes_final["Instrucciones"].apply(extract_hour)
 
-    # normalización
+    # normalización clave
     for df_ in [track_final, maestro_final, ordenes_final]:
         df_["Num Order"] = df_["Num Order"].apply(normalize_order)
 
-    # =================================================
-    # MERGE
-    # =================================================
-
+    # merge
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
 
@@ -186,6 +201,12 @@ latest_df = load_latest()
 
 if not latest_df.empty:
 
+    # =================================================
+    # 🔥 FIX CRÍTICO: COLUMNAS LIMPIAS
+    # =================================================
+
+    latest_df = normalize_columns(latest_df)
+
     latest_df["Fecha Creación"] = safe_date(latest_df["Fecha Creación"])
     latest_df["Fecha de entrega"] = safe_date(latest_df["Fecha de entrega"])
 
@@ -193,11 +214,9 @@ if not latest_df.empty:
 
     st.markdown("## 🎯 Filtros")
 
-    # CLIENTE
     clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
-    # FECHAS
     min_c, max_c = df_filtered["Fecha Creación"].min(), df_filtered["Fecha Creación"].max()
     min_e, max_e = df_filtered["Fecha de entrega"].min(), df_filtered["Fecha de entrega"].max()
 
@@ -206,11 +225,11 @@ if not latest_df.empty:
 
     incluir_null = st.checkbox("Incluir sin fecha entrega", True)
 
-    # CLIENTE FILTER
+    # filtros cliente
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
-    # FECHA CREACIÓN
+    # filtro creación
     start_c = pd.to_datetime(fecha_creacion[0])
     end_c = pd.to_datetime(fecha_creacion[1])
 
@@ -218,7 +237,7 @@ if not latest_df.empty:
         df_filtered["Fecha Creación"].between(start_c, end_c)
     ]
 
-    # FECHA ENTREGA
+    # filtro entrega
     start_e = pd.to_datetime(fecha_entrega[0])
     end_e = pd.to_datetime(fecha_entrega[1])
 
@@ -232,7 +251,7 @@ if not latest_df.empty:
         df_filtered = df_filtered[mask]
 
     # =================================================
-    # FIX CRÍTICO: EVITA KEYERROR
+    # 🔥 FIX FINAL ANTI-KEYERROR
     # =================================================
 
     cols = [
@@ -247,7 +266,15 @@ if not latest_df.empty:
         "Monto"
     ]
 
-    df_filtered = df_filtered.reindex(columns=cols)
+    # DEBUG PROTEGIDO
+    missing = [c for c in cols if c not in df_filtered.columns]
+
+    if missing:
+        st.error(f"Faltan columnas: {missing}")
+        st.write("Columnas reales:", df_filtered.columns.tolist())
+        st.stop()
+
+    df_filtered = df_filtered[cols]
 
     st.metric("Resultados", len(df_filtered))
     st.dataframe(df_filtered, use_container_width=True)
