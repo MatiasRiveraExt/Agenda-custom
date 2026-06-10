@@ -15,10 +15,10 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 Agenda Automática PRO - Base de Datos")
+st.title("📊 Agenda Automática PRO - Base Histórica")
 
 # =====================================================
-# GOOGLE SHEETS AUTH
+# GOOGLE SHEETS
 # =====================================================
 
 SCOPES = [
@@ -93,7 +93,7 @@ def normalize_order(x):
 def format_chilean_money(value):
 
     try:
-        value = float(value)
+        value = float(str(value).replace(".", "").replace(",", ""))
         return f"{int(value):,}".replace(",", ".")
     except:
         return value
@@ -114,118 +114,16 @@ def to_excel(df):
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Agenda")
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Agenda"
+        )
 
     return output.getvalue()
 
 # =====================================================
-# UPSERT
-# =====================================================
-
-def upsert_to_sheet(df, sheet_name):
-
-    ws = sheet.worksheet(sheet_name)
-
-    existing = ws.get_all_records()
-
-    # =================================================
-    # SI NO HAY DATA PREVIA
-    # =================================================
-
-    if len(existing) == 0:
-
-        ws.clear()
-
-        df = df.fillna("").astype(str)
-
-        values = [df.columns.tolist()]
-
-        for row in df.values:
-            values.append([str(x) for x in row])
-
-        ws.update(values)
-
-        return
-
-    # =================================================
-    # EXISTING DF
-    # =================================================
-
-    existing_df = pd.DataFrame(existing)
-
-    if "Num Order" not in existing_df.columns:
-
-        ws.clear()
-
-        existing_df = pd.DataFrame()
-
-    # =================================================
-    # NORMALIZAR KEYS
-    # =================================================
-
-    df["Num Order"] = df["Num Order"].astype(str)
-    existing_df["Num Order"] = existing_df["Num Order"].astype(str)
-
-    # =================================================
-    # 🔥 ELIMINAR DUPLICADOS
-    # =================================================
-
-    existing_df = existing_df.drop_duplicates(
-        subset="Num Order",
-        keep="last"
-    )
-
-    df = df.drop_duplicates(
-        subset="Num Order",
-        keep="last"
-    )
-
-    # =================================================
-    # DEBUG DUPLICADOS
-    # =================================================
-
-    duplicates = df[df.duplicated("Num Order", keep=False)]
-
-    if not duplicates.empty:
-
-        st.warning("⚠️ Se encontraron órdenes duplicadas")
-
-        st.dataframe(duplicates)
-
-    # =================================================
-    # INDEX
-    # =================================================
-
-    existing_df = existing_df.set_index("Num Order")
-    df = df.set_index("Num Order")
-
-    # =================================================
-    # UPSERT
-    # =================================================
-
-    combined = df.combine_first(existing_df)
-
-    combined.update(df)
-
-    combined = combined.reset_index()
-
-    # =================================================
-    # WRITE BACK
-    # =================================================
-
-    ws.clear()
-
-    combined = combined.fillna("").astype(str)
-
-    values = [combined.columns.tolist()]
-
-    for row in combined.values:
-        values.append([str(x) for x in row])
-
-    ws.update(values)
-
-# =====================================================
-# LOAD FROM SHEETS
+# CARGAR BASE HISTÓRICA
 # =====================================================
 
 def load_latest_from_sheet():
@@ -240,10 +138,83 @@ def load_latest_from_sheet():
     return pd.DataFrame(data)
 
 # =====================================================
+# UPSERT HISTÓRICO
+# =====================================================
+
+def upsert_to_sheet(df_new, sheet_name):
+
+    ws = sheet.worksheet(sheet_name)
+
+    existing = ws.get_all_records()
+
+    # =================================================
+    # SI NO EXISTE BASE
+    # =================================================
+
+    if len(existing) == 0:
+
+        final_df = df_new.copy()
+
+    else:
+
+        existing_df = pd.DataFrame(existing)
+
+        existing_df = clean_dataframe(existing_df)
+
+        # =============================================
+        # NORMALIZAR
+        # =============================================
+
+        existing_df["Num Order"] = existing_df["Num Order"].apply(
+            normalize_order
+        )
+
+        df_new["Num Order"] = df_new["Num Order"].apply(
+            normalize_order
+        )
+
+        # =============================================
+        # CONCAT
+        # =============================================
+
+        final_df = pd.concat(
+            [existing_df, df_new],
+            ignore_index=True
+        )
+
+        # =============================================
+        # ELIMINAR DUPLICADOS
+        # =============================================
+
+        final_df = final_df.drop_duplicates(
+            subset="Num Order",
+            keep="last"
+        )
+
+    # =================================================
+    # LIMPIEZA FINAL
+    # =================================================
+
+    final_df = final_df.fillna("").astype(str)
+
+    # =================================================
+    # WRITE
+    # =================================================
+
+    ws.clear()
+
+    values = [final_df.columns.tolist()]
+
+    for row in final_df.values:
+        values.append([str(x) for x in row])
+
+    ws.update(values)
+
+# =====================================================
 # UI
 # =====================================================
 
-st.subheader("📤 Generar nueva agenda")
+st.subheader("📤 Actualizar Base Histórica")
 
 ordenes_file = st.file_uploader(
     "Archivo Ordenes",
@@ -261,10 +232,10 @@ maestro_file = st.file_uploader(
 )
 
 # =====================================================
-# GENERAR AGENDA
+# GENERAR
 # =====================================================
 
-if st.button("🚀 Generar Agenda"):
+if st.button("🚀 Actualizar y Generar Agenda"):
 
     if not ordenes_file or not track_file or not maestro_file:
 
@@ -273,7 +244,7 @@ if st.button("🚀 Generar Agenda"):
         st.stop()
 
     # =================================================
-    # READ FILES
+    # LEER ARCHIVOS
     # =================================================
 
     ordenes = clean_dataframe(
@@ -316,29 +287,23 @@ if st.button("🚀 Generar Agenda"):
     for col in required_ordenes:
 
         if col not in ordenes.columns:
-
             st.error(f"❌ Falta '{col}' en Ordenes")
-
             st.stop()
 
     for col in required_track:
 
         if col not in track.columns:
-
             st.error(f"❌ Falta '{col}' en Track")
-
             st.stop()
 
     for col in required_maestro:
 
         if col not in maestro.columns:
-
             st.error(f"❌ Falta '{col}' en Maestro")
-
             st.stop()
 
     # =================================================
-    # HORA
+    # EXTRAER HORA
     # =================================================
 
     ordenes["Hora"] = ordenes["Instrucciones"].apply(
@@ -346,7 +311,7 @@ if st.button("🚀 Generar Agenda"):
     )
 
     # =================================================
-    # TRACK FINAL
+    # TRACK
     # =================================================
 
     track_final = track[[
@@ -364,7 +329,7 @@ if st.button("🚀 Generar Agenda"):
     })
 
     # =================================================
-    # MAESTRO FINAL
+    # MAESTRO
     # =================================================
 
     maestro_final = maestro[[
@@ -374,7 +339,7 @@ if st.button("🚀 Generar Agenda"):
     ]].copy()
 
     # =================================================
-    # ORDENES FINAL
+    # ORDENES
     # =================================================
 
     ordenes_final = ordenes[[
@@ -389,7 +354,7 @@ if st.button("🚀 Generar Agenda"):
     })
 
     # =================================================
-    # NORMALIZAR KEYS
+    # NORMALIZAR
     # =================================================
 
     track_final["Num Order"] = track_final["Num Order"].apply(
@@ -468,15 +433,21 @@ if st.button("🚀 Generar Agenda"):
 
     df = df.fillna("")
 
-    df = df.drop_duplicates()
-
     # =================================================
-    # UPSERT TO SHEETS
+    # ACTUALIZAR BASE HISTÓRICA
     # =================================================
 
     upsert_to_sheet(df, "Agenda Final")
 
-    st.success("☁️ Base de datos actualizada correctamente")
+    st.success("☁️ Base histórica actualizada")
+
+    # =================================================
+    # 🔥 RECARGAR TODA LA BASE
+    # =================================================
+
+    df = load_latest_from_sheet()
+
+    st.success("📦 Agenda reconstruida desde TODA la base histórica")
 
     # =================================================
     # TIMESTAMP
@@ -485,7 +456,7 @@ if st.button("🚀 Generar Agenda"):
     ws = sheet.worksheet("Agenda Final")
 
     timestamp = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
+        "%d-%m-%Y %H:%M:%S"
     )
 
     ws.update(
@@ -494,10 +465,17 @@ if st.button("🚀 Generar Agenda"):
     )
 
     # =================================================
-    # OUTPUT
+    # MÉTRICAS
     # =================================================
 
-    st.success("🎯 Agenda generada correctamente")
+    st.metric(
+        "📊 OC históricas",
+        len(df)
+    )
+
+    # =================================================
+    # OUTPUT
+    # =================================================
 
     st.dataframe(
         df,
@@ -505,23 +483,23 @@ if st.button("🚀 Generar Agenda"):
     )
 
     # =================================================
-    # DOWNLOAD GENERATED
+    # DESCARGA
     # =================================================
 
     st.download_button(
-        "📥 Descargar Excel generado",
+        "📥 Descargar agenda histórica",
         to_excel(df),
-        file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        file_name=f"Agenda_Historica_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # =====================================================
-# DOWNLOAD FROM DATABASE
+# DESCARGA DIRECTA DESDE BD
 # =====================================================
 
 st.divider()
 
-st.subheader("📦 Descargar última agenda desde base de datos")
+st.subheader("📦 Última agenda desde Base Histórica")
 
 latest_df = load_latest_from_sheet()
 
@@ -531,7 +509,12 @@ if latest_df.empty:
 
 else:
 
-    st.success("📊 Última agenda cargada desde Google Sheets")
+    st.success("📊 Base histórica cargada")
+
+    st.metric(
+        "📈 Total OC históricas",
+        len(latest_df)
+    )
 
     st.dataframe(
         latest_df,
