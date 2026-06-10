@@ -77,9 +77,9 @@ def format_chilean_money(value):
 
 def format_date(value):
     try:
-        return pd.to_datetime(value).strftime("%d-%m-%Y")
+        return pd.to_datetime(value)
     except:
-        return value
+        return pd.NaT
 
 
 def to_excel(df):
@@ -100,7 +100,7 @@ def load_latest_from_sheet():
     return pd.DataFrame(data)
 
 # =====================================================
-# UPSERT (FIX DEFINITIVO DE ORDEN)
+# UPSERT (HISTÓRICO)
 # =====================================================
 
 def upsert_to_sheet(df_new, sheet_name):
@@ -112,7 +112,6 @@ def upsert_to_sheet(df_new, sheet_name):
         final_df = df_new.copy()
     else:
         existing_df = pd.DataFrame(existing)
-
         existing_df = clean_dataframe(existing_df)
 
         existing_df["Num Order"] = existing_df["Num Order"].apply(normalize_order)
@@ -124,10 +123,7 @@ def upsert_to_sheet(df_new, sheet_name):
 
     final_df = final_df.fillna("").astype(str)
 
-    # =================================================
-    # 🔥 ORDEN FORZADO REAL (IMPORTANTE)
-    # =================================================
-
+    # orden fijo
     desired_order = [
         "Num Order",
         "Fecha Creación",
@@ -142,14 +138,9 @@ def upsert_to_sheet(df_new, sheet_name):
 
     final_df = final_df[[c for c in desired_order if c in final_df.columns]]
 
-    # =================================================
-    # WRITE A SHEETS
-    # =================================================
-
     ws.clear()
 
     values = [final_df.columns.tolist()] + final_df.values.tolist()
-
     ws.update(values)
 
 # =====================================================
@@ -163,7 +154,7 @@ track_file = st.file_uploader("Archivo Track", type=["xlsx"])
 maestro_file = st.file_uploader("Archivo Maestro", type=["xlsx"])
 
 # =====================================================
-# MAIN
+# GENERAR
 # =====================================================
 
 if st.button("🚀 Actualizar y Generar Agenda"):
@@ -179,7 +170,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     st.success("📥 Archivos cargados correctamente")
 
     # =================================================
-    # VALIDACIONES
+    # VALIDACIÓN
     # =================================================
 
     required_track = [
@@ -196,7 +187,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
             st.stop()
 
     # =================================================
-    # TRANSFORMACIONES
+    # TRANSFORMACIÓN
     # =================================================
 
     ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
@@ -226,75 +217,116 @@ if st.button("🚀 Actualizar y Generar Agenda"):
         "Fecha Entrega": "Fecha de entrega"
     })
 
-    # =================================================
-    # NORMALIZAR
-    # =================================================
-
+    # normalizar
     track_final["Num Order"] = track_final["Num Order"].apply(normalize_order)
     maestro_final["Num Order"] = maestro_final["Num Order"].apply(normalize_order)
     ordenes_final["Num Order"] = ordenes_final["Num Order"].apply(normalize_order)
 
-    # =================================================
-    # MERGE
-    # =================================================
-
+    # merge
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
 
-    # =================================================
-    # FORMATO
-    # =================================================
-
+    # formato
     df["Monto"] = df["Monto"].apply(format_chilean_money)
-    df["Fecha de entrega"] = df["Fecha de entrega"].apply(format_date)
     df["Fecha Creación"] = df["Fecha Creación"].apply(format_date)
+    df["Fecha de entrega"] = df["Fecha de entrega"].apply(format_date)
 
     df = df.fillna("")
-
-    # =================================================
-    # GUARDAR EN DB
-    # =================================================
 
     upsert_to_sheet(df, "Agenda Final")
 
     st.success("☁️ Base histórica actualizada")
 
-    # =================================================
-    # RECARGA
-    # =================================================
-
-    df = load_latest_from_sheet()
-
-    st.success("📦 Agenda reconstruida desde base histórica")
-
-    st.metric("📊 OC históricas", len(df))
-
-    st.dataframe(df, use_container_width=True)
-
-    st.download_button(
-        "📥 Descargar agenda histórica",
-        to_excel(df),
-        file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
 # =====================================================
-# VIEW DB
+# LOAD FINAL DB
 # =====================================================
 
 st.divider()
-st.subheader("📦 Última agenda desde base histórica")
+st.subheader("📦 Base histórica")
 
 latest_df = load_latest_from_sheet()
 
 if not latest_df.empty:
-    st.dataframe(latest_df, use_container_width=True)
+
+    # convertir fechas
+    latest_df["Fecha Creación"] = pd.to_datetime(latest_df["Fecha Creación"], errors="coerce")
+    latest_df["Fecha de entrega"] = pd.to_datetime(latest_df["Fecha de entrega"], errors="coerce")
+
+    # =================================================
+    # FILTROS
+    # =================================================
+
+    st.markdown("## 🎯 Filtros de descarga")
+
+    clientes = latest_df["Cliente"].dropna().unique().tolist()
+
+    clientes_sel = st.multiselect("👤 Cliente", clientes)
+
+    fecha_creacion = st.date_input(
+        "📅 Fecha creación (rango)",
+        value=(latest_df["Fecha Creación"].min(), latest_df["Fecha Creación"].max())
+    )
+
+    fecha_entrega = st.date_input(
+        "🚚 Fecha entrega (rango)",
+        value=(latest_df["Fecha de entrega"].min(), latest_df["Fecha de entrega"].max())
+    )
+
+    incluir_sin_entrega = st.checkbox("📌 Incluir sin fecha de entrega", value=True)
+
+    df_filtered = latest_df.copy()
+
+    # cliente
+    if clientes_sel:
+        df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
+
+    # fecha creación
+    if isinstance(fecha_creacion, tuple):
+        df_filtered = df_filtered[
+            (df_filtered["Fecha Creación"] >= pd.to_datetime(fecha_creacion[0])) &
+            (df_filtered["Fecha Creación"] <= pd.to_datetime(fecha_creacion[1]))
+        ]
+
+    # fecha entrega
+    if isinstance(fecha_entrega, tuple):
+
+        if incluir_sin_entrega:
+            df_filtered = df_filtered[
+                df_filtered["Fecha de entrega"].isna() |
+                (
+                    (df_filtered["Fecha de entrega"] >= pd.to_datetime(fecha_entrega[0])) &
+                    (df_filtered["Fecha de entrega"] <= pd.to_datetime(fecha_entrega[1]))
+                )
+            ]
+        else:
+            df_filtered = df_filtered[
+                (df_filtered["Fecha de entrega"] >= pd.to_datetime(fecha_entrega[0])) &
+                (df_filtered["Fecha de entrega"] <= pd.to_datetime(fecha_entrega[1]))
+            ]
+
+    # ordenar columnas
+    df_filtered = df_filtered[[
+        "Num Order",
+        "Fecha Creación",
+        "Cliente",
+        "Departamento",
+        "PD",
+        "Suma de Unidades",
+        "Fecha de entrega",
+        "Hora",
+        "Monto"
+    ]]
+
+    st.metric("📊 Resultados", len(df_filtered))
+
+    st.dataframe(df_filtered, use_container_width=True)
 
     st.download_button(
-        "📥 Descargar última agenda",
-        to_excel(latest_df),
-        file_name=f"Agenda_DB_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        "📥 Descargar agenda filtrada",
+        to_excel(df_filtered),
+        file_name=f"Agenda_FILTRADA_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 else:
     st.warning("No hay datos aún")
