@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - FILTRO SIMPLE")
+st.title("📊 Agenda Automática PRO - FIX FINAL ESTABLE")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -65,15 +65,18 @@ def format_money(v):
         return v
 
 
-def to_datetime(series):
-    return pd.to_datetime(series, errors="coerce")
-
-
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     return output.getvalue()
+
+# =====================================================
+# 🔥 FECHAS EN STRING (FIX DEFINITIVO)
+# =====================================================
+
+def to_date_str(series):
+    return pd.to_datetime(series, errors="coerce").dt.strftime("%Y-%m-%d")
 
 # =====================================================
 # LOAD SHEET
@@ -155,8 +158,12 @@ if st.button("🚀 Generar"):
 
     df["Monto"] = df["Monto"].apply(format_money)
 
-    df["Fecha Creación"] = to_datetime(df["Fecha Creación"])
-    df["Fecha de entrega"] = to_datetime(df["Fecha de entrega"])
+    # =================================================
+    # 🔥 FECHAS COMO STRING (ESTABLE)
+    # =================================================
+
+    df["Fecha Creación"] = to_date_str(df["Fecha Creación"])
+    df["Fecha de entrega"] = to_date_str(df["Fecha de entrega"])
 
     ws = sheet.worksheet("Agenda Final")
     ws.clear()
@@ -177,9 +184,6 @@ if not latest_df.empty:
 
     latest_df = normalize_columns(latest_df)
 
-    latest_df["Fecha Creación"] = to_datetime(latest_df["Fecha Creación"])
-    latest_df["Fecha de entrega"] = to_datetime(latest_df["Fecha de entrega"])
-
     df_filtered = latest_df.copy()
 
     # =================================================
@@ -193,13 +197,13 @@ if not latest_df.empty:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
     # =================================================
-    # SOLO 1 FILTRO: FECHA CREACIÓN
+    # 🔥 FECHAS (STRING FILTER - 100% ESTABLE)
     # =================================================
 
     fechas = df_filtered["Fecha Creación"].dropna()
 
     if fechas.empty:
-        st.warning("No hay fechas de creación")
+        st.warning("No hay fechas disponibles")
         st.stop()
 
     min_c = fechas.min()
@@ -207,14 +211,18 @@ if not latest_df.empty:
 
     fecha_creacion = st.date_input(
         "Fecha creación",
-        value=(min_c.date(), max_c.date())
+        value=(
+            datetime.strptime(min_c, "%Y-%m-%d").date(),
+            datetime.strptime(max_c, "%Y-%m-%d").date()
+        )
     )
 
-    start_c = pd.to_datetime(fecha_creacion[0])
-    end_c = pd.to_datetime(fecha_creacion[1])
+    start_c = fecha_creacion[0].strftime("%Y-%m-%d")
+    end_c = fecha_creacion[1].strftime("%Y-%m-%d")
 
     df_filtered = df_filtered[
-        df_filtered["Fecha Creación"].between(start_c, end_c)
+        (df_filtered["Fecha Creación"] >= start_c) &
+        (df_filtered["Fecha Creación"] <= end_c)
     ]
 
     # =================================================
