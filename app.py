@@ -10,11 +10,7 @@ import re
 # CONFIG
 # =====================================================
 
-st.set_page_config(
-    page_title="Agenda PRO DB",
-    layout="wide"
-)
-
+st.set_page_config(page_title="Agenda PRO DB", layout="wide")
 st.title("📊 Agenda Automática PRO - Base Histórica")
 
 # =====================================================
@@ -75,9 +71,10 @@ def format_chilean_money(value):
         return value
 
 
-def format_date(value):
+def parse_date(value):
+    """SIEMPRE retorna date (no datetime)"""
     try:
-        return pd.to_datetime(value)
+        return pd.to_datetime(value).date()
     except:
         return pd.NaT
 
@@ -100,7 +97,7 @@ def load_latest_from_sheet():
     return pd.DataFrame(data)
 
 # =====================================================
-# UPSERT (HISTÓRICO)
+# UPSERT HISTÓRICO
 # =====================================================
 
 def upsert_to_sheet(df_new, sheet_name):
@@ -123,7 +120,6 @@ def upsert_to_sheet(df_new, sheet_name):
 
     final_df = final_df.fillna("").astype(str)
 
-    # orden fijo
     desired_order = [
         "Num Order",
         "Fecha Creación",
@@ -144,7 +140,7 @@ def upsert_to_sheet(df_new, sheet_name):
     ws.update(values)
 
 # =====================================================
-# UI
+# UI INPUT
 # =====================================================
 
 st.subheader("📤 Actualizar Base Histórica")
@@ -217,7 +213,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
         "Fecha Entrega": "Fecha de entrega"
     })
 
-    # normalizar
+    # normalizar OC
     track_final["Num Order"] = track_final["Num Order"].apply(normalize_order)
     maestro_final["Num Order"] = maestro_final["Num Order"].apply(normalize_order)
     ordenes_final["Num Order"] = ordenes_final["Num Order"].apply(normalize_order)
@@ -226,10 +222,11 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
 
-    # formato
     df["Monto"] = df["Monto"].apply(format_chilean_money)
-    df["Fecha Creación"] = df["Fecha Creación"].apply(format_date)
-    df["Fecha de entrega"] = df["Fecha de entrega"].apply(format_date)
+
+    # fechas como DATE real (clave del fix)
+    df["Fecha Creación"] = df["Fecha Creación"].apply(parse_date)
+    df["Fecha de entrega"] = df["Fecha de entrega"].apply(parse_date)
 
     df = df.fillna("")
 
@@ -238,7 +235,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     st.success("☁️ Base histórica actualizada")
 
 # =====================================================
-# LOAD FINAL DB
+# LOAD DB
 # =====================================================
 
 st.divider()
@@ -248,74 +245,81 @@ latest_df = load_latest_from_sheet()
 
 if not latest_df.empty:
 
-    # convertir fechas
-    latest_df["Fecha Creación"] = pd.to_datetime(latest_df["Fecha Creación"], errors="coerce")
-    latest_df["Fecha de entrega"] = pd.to_datetime(latest_df["Fecha de entrega"], errors="coerce")
-
-    # =================================================
-    # FILTROS
-    # =================================================
+    # FIX CRÍTICO: fechas consistentes tipo DATE
+    latest_df["Fecha Creación"] = pd.to_datetime(latest_df["Fecha Creación"], errors="coerce").dt.date
+    latest_df["Fecha de entrega"] = pd.to_datetime(latest_df["Fecha de entrega"], errors="coerce").dt.date
 
     st.markdown("## 🎯 Filtros de descarga")
 
-    clientes = latest_df["Cliente"].dropna().unique().tolist()
-
+    # CLIENTE
+    clientes = sorted(latest_df["Cliente"].dropna().unique().tolist())
     clientes_sel = st.multiselect("👤 Cliente", clientes)
 
+    # FECHAS
+    min_c = latest_df["Fecha Creación"].min()
+    max_c = latest_df["Fecha Creación"].max()
+
     fecha_creacion = st.date_input(
-        "📅 Fecha creación (rango)",
-        value=(latest_df["Fecha Creación"].min(), latest_df["Fecha Creación"].max())
+        "📅 Fecha creación",
+        value=(min_c, max_c)
     )
+
+    min_e = latest_df["Fecha de entrega"].min()
+    max_e = latest_df["Fecha de entrega"].max()
 
     fecha_entrega = st.date_input(
-        "🚚 Fecha entrega (rango)",
-        value=(latest_df["Fecha de entrega"].min(), latest_df["Fecha de entrega"].max())
+        "🚚 Fecha entrega",
+        value=(min_e, max_e)
     )
 
-    incluir_sin_entrega = st.checkbox("📌 Incluir sin fecha de entrega", value=True)
+    incluir_null = st.checkbox("📌 Incluir sin fecha de entrega", True)
 
     df_filtered = latest_df.copy()
 
-    # cliente
+    # filtro cliente
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
-    # fecha creación
+    # filtro creación
     if isinstance(fecha_creacion, tuple):
+        start, end = fecha_creacion
         df_filtered = df_filtered[
-            (df_filtered["Fecha Creación"] >= pd.to_datetime(fecha_creacion[0])) &
-            (df_filtered["Fecha Creación"] <= pd.to_datetime(fecha_creacion[1]))
+            (df_filtered["Fecha Creación"] >= start) &
+            (df_filtered["Fecha Creación"] <= end)
         ]
 
-    # fecha entrega
+    # filtro entrega
     if isinstance(fecha_entrega, tuple):
+        start, end = fecha_entrega
 
-        if incluir_sin_entrega:
+        if incluir_null:
             df_filtered = df_filtered[
                 df_filtered["Fecha de entrega"].isna() |
                 (
-                    (df_filtered["Fecha de entrega"] >= pd.to_datetime(fecha_entrega[0])) &
-                    (df_filtered["Fecha de entrega"] <= pd.to_datetime(fecha_entrega[1]))
+                    (df_filtered["Fecha de entrega"] >= start) &
+                    (df_filtered["Fecha de entrega"] <= end)
                 )
             ]
         else:
             df_filtered = df_filtered[
-                (df_filtered["Fecha de entrega"] >= pd.to_datetime(fecha_entrega[0])) &
-                (df_filtered["Fecha de entrega"] <= pd.to_datetime(fecha_entrega[1]))
+                (df_filtered["Fecha de entrega"] >= start) &
+                (df_filtered["Fecha de entrega"] <= end)
             ]
 
-    # ordenar columnas
-    df_filtered = df_filtered[[
-        "Num Order",
-        "Fecha Creación",
-        "Cliente",
-        "Departamento",
-        "PD",
-        "Suma de Unidades",
-        "Fecha de entrega",
-        "Hora",
-        "Monto"
-    ]]
+    # orden final
+    df_filtered = df_filtered[
+        [
+            "Num Order",
+            "Fecha Creación",
+            "Cliente",
+            "Departamento",
+            "PD",
+            "Suma de Unidades",
+            "Fecha de entrega",
+            "Hora",
+            "Monto"
+        ]
+    ]
 
     st.metric("📊 Resultados", len(df_filtered))
 
