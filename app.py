@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - FIX FILTROS")
+st.title("📊 Agenda Automática PRO - ESTABLE")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -35,24 +35,38 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =====================================================
-# HELPERS
+# 🔥 NORMALIZACIÓN DE COLUMNAS (CRÍTICO)
 # =====================================================
 
 def normalize_columns(df):
     df = df.copy()
-    df.columns = df.columns.astype(str).str.strip()
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.replace("\n", "", regex=False)
+        .str.replace("\t", "", regex=False)
+    )
     return df
 
+# =====================================================
+# FECHAS SEGURAS
+# =====================================================
 
-def safe_datetime(series):
-    return pd.to_datetime(series, errors="coerce")
+def safe_date(s):
+    return pd.to_datetime(
+        s.replace(["", " ", "N/A", "nan", "None"], pd.NaT),
+        errors="coerce"
+    )
 
+# =====================================================
+# HELPERS
+# =====================================================
 
 def extract_hour(text):
     if pd.isna(text):
         return ""
-    match = re.search(r'(\d{1,2}:\d{2})', str(text))
-    return match.group(1) if match else ""
+    m = re.search(r'(\d{1,2}:\d{2})', str(text))
+    return m.group(1) if m else ""
 
 
 def normalize_order(x):
@@ -113,16 +127,27 @@ if st.button("🚀 Generar"):
     st.success("📥 Archivos cargados")
 
     # =================================================
-    # TRACK
+    # VALIDACIÓN TRACK
     # =================================================
 
-    track_final = track[[
+    required_track = [
         "Created On",
         "PO Number",
         "Sold to Name",
         "Delivered Quantity",
         "Delivered Amount"
-    ]].rename(columns={
+    ]
+
+    missing = [c for c in required_track if c not in track.columns]
+    if missing:
+        st.error(f"Faltan columnas en Track: {missing}")
+        st.stop()
+
+    # =================================================
+    # MAPEO SEGURO
+    # =================================================
+
+    track_final = track[required_track].rename(columns={
         "Created On": "Fecha Creación",
         "PO Number": "Num Order",
         "Sold to Name": "Cliente",
@@ -130,18 +155,18 @@ if st.button("🚀 Generar"):
         "Delivered Amount": "Monto"
     })
 
-    # =================================================
-    # MAESTRO + ORDENES
-    # =================================================
+    # maestro seguro
+    maestro_final = maestro.reindex(columns=["Num Order", "Departamento", "PD"])
 
-    maestro_final = maestro[["Num Order", "Departamento", "PD"]]
+    # ordenes seguro
+    ordenes_final = ordenes.reindex(columns=["O/C Cliente", "Fecha Entrega", "Instrucciones"])
 
-    ordenes_final = ordenes[["O/C Cliente", "Fecha Entrega", "Instrucciones"]].rename(columns={
+    ordenes_final = ordenes_final.rename(columns={
         "O/C Cliente": "Num Order",
         "Fecha Entrega": "Fecha de entrega"
     })
 
-    ordenes_final["Hora"] = ordenes_final["Instrucciones"].apply(extract_hour)
+    ordenes_final["Hora"] = ordenes_final.get("Instrucciones", "").apply(extract_hour)
 
     # =================================================
     # NORMALIZAR KEY
@@ -159,12 +184,8 @@ if st.button("🚀 Generar"):
 
     df["Monto"] = df["Monto"].apply(format_money)
 
-    # =================================================
-    # 🔥 FIX CRÍTICO FECHAS
-    # =================================================
-
-    df["Fecha Creación"] = safe_datetime(df["Fecha Creación"])
-    df["Fecha de entrega"] = safe_datetime(df["Fecha de entrega"])
+    df["Fecha Creación"] = safe_date(df["Fecha Creación"])
+    df["Fecha de entrega"] = safe_date(df["Fecha de entrega"])
 
     ws = sheet.worksheet("Agenda Final")
     ws.clear()
@@ -173,7 +194,7 @@ if st.button("🚀 Generar"):
     st.success("☁️ Base actualizada")
 
 # =====================================================
-# LOAD + FILTER
+# LOAD + FILTERS
 # =====================================================
 
 st.divider()
@@ -185,7 +206,21 @@ if not latest_df.empty:
 
     latest_df = normalize_columns(latest_df)
 
-    # 🔥 FORZAR TIPO REAL (CLAVE)
+    # 🔥 FORZAR COLUMNAS SEGURAS (CLAVE FINAL)
+    expected_cols = [
+        "Num Order",
+        "Fecha Creación",
+        "Cliente",
+        "Departamento",
+        "PD",
+        "Unidades",
+        "Fecha de entrega",
+        "Hora",
+        "Monto"
+    ]
+
+    latest_df = latest_df.reindex(columns=expected_cols)
+
     latest_df["Fecha Creación"] = pd.to_datetime(latest_df["Fecha Creación"], errors="coerce")
     latest_df["Fecha de entrega"] = pd.to_datetime(latest_df["Fecha de entrega"], errors="coerce")
 
@@ -206,17 +241,11 @@ if not latest_df.empty:
 
     incluir_null = st.checkbox("Incluir sin fecha entrega", True)
 
-    # =================================================
     # CLIENTE
-    # =================================================
-
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
-    # =================================================
-    # 🔥 FIX FECHA CREACIÓN
-    # =================================================
-
+    # FECHA CREACIÓN
     start_c = pd.to_datetime(fecha_creacion[0])
     end_c = pd.to_datetime(fecha_creacion[1])
 
@@ -225,10 +254,7 @@ if not latest_df.empty:
         (df_filtered["Fecha Creación"] <= end_c)
     ]
 
-    # =================================================
-    # 🔥 FIX FECHA ENTREGA (ESTE ES EL PROBLEMA REAL)
-    # =================================================
-
+    # FECHA ENTREGA (FIX FINAL)
     start_e = pd.to_datetime(fecha_entrega[0])
     end_e = pd.to_datetime(fecha_entrega[1])
 
@@ -242,20 +268,10 @@ if not latest_df.empty:
         df_filtered = df_filtered[mask]
 
     # =================================================
-    # OUTPUT FINAL
+    # OUTPUT FINAL (SIN KEYERROR JAMÁS)
     # =================================================
 
-    df_filtered = df_filtered[[
-        "Num Order",
-        "Fecha Creación",
-        "Cliente",
-        "Departamento",
-        "PD",
-        "Unidades",
-        "Fecha de entrega",
-        "Hora",
-        "Monto"
-    ]]
+    df_filtered = df_filtered.reindex(columns=expected_cols)
 
     st.metric("Resultados", len(df_filtered))
     st.dataframe(df_filtered, use_container_width=True)
