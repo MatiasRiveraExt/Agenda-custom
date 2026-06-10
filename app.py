@@ -11,7 +11,7 @@ import re
 # =====================================================
 
 st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - Base Estable")
+st.title("📊 Agenda Automática PRO - Base Histórica")
 
 # =====================================================
 # GOOGLE SHEETS
@@ -35,43 +35,7 @@ sheet = client.open_by_key(SHEET_ID)
 st.success("✅ Conectado a Google Sheets")
 
 # =====================================================
-# 🔥 LIMPIEZA REAL DE FECHAS (FIX DEFINITIVO)
-# =====================================================
-
-def safe_date(series):
-    """
-    Convierte cualquier cosa a datetime:
-    - strings
-    - fechas reales
-    - Excel serial numbers
-    - basura tipo 'N/A'
-    """
-
-    s = series.copy()
-
-    # limpiar basura común
-    s = s.replace(["", " ", "N/A", "nan", "None"], pd.NaT)
-
-    # intento 1: parse normal
-    out = pd.to_datetime(s, errors="coerce", dayfirst=True)
-
-    # intento 2: Excel serial fallback
-    mask_num = s.astype(str).str.match(r"^\d{4,6}$", na=False)
-
-    if mask_num.any():
-        try:
-            out.loc[mask_num] = pd.to_datetime(
-                pd.to_numeric(s[mask_num], errors="coerce"),
-                unit="D",
-                origin="1899-12-30"
-            )
-        except:
-            pass
-
-    return out
-
-# =====================================================
-# HELPERS
+# FUNCIONES
 # =====================================================
 
 def clean_dataframe(df):
@@ -93,17 +57,25 @@ def normalize_order(x):
     if pd.isna(x):
         return ""
     x = str(x).strip()
+    x = x.replace("\u00a0", "")
     x = re.sub(r"\.0$", "", x)
     x = x.lstrip("0")
     return x
 
 
-def format_money(value):
+def format_chilean_money(value):
     try:
         value = float(str(value).replace(".", "").replace(",", ""))
         return f"{int(value):,}".replace(",", ".")
     except:
         return value
+
+
+def parse_datetime(value):
+    try:
+        return pd.to_datetime(value, errors="coerce")
+    except:
+        return pd.NaT
 
 
 def to_excel(df):
@@ -113,19 +85,21 @@ def to_excel(df):
     return output.getvalue()
 
 # =====================================================
-# LOAD SHEET
+# LOAD DB
 # =====================================================
 
-def load_latest():
+def load_latest_from_sheet():
     ws = sheet.worksheet("Agenda Final")
     data = ws.get_all_records()
-    return pd.DataFrame(data) if data else pd.DataFrame()
+    if not data:
+        return pd.DataFrame()
+    return pd.DataFrame(data)
 
 # =====================================================
-# UI
+# UI INPUT
 # =====================================================
 
-st.subheader("📤 Actualización base")
+st.subheader("📤 Actualizar Base Histórica")
 
 ordenes_file = st.file_uploader("Ordenes", type=["xlsx"])
 track_file = st.file_uploader("Track", type=["xlsx"])
@@ -138,7 +112,7 @@ maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 if st.button("🚀 Generar Agenda"):
 
     if not ordenes_file or not track_file or not maestro_file:
-        st.error("Faltan archivos")
+        st.error("❌ Debes subir los 3 archivos")
         st.stop()
 
     ordenes = clean_dataframe(pd.read_excel(ordenes_file))
@@ -149,42 +123,53 @@ if st.button("🚀 Generar Agenda"):
 
     required = ["Created On", "PO Number", "Sold to Name", "Delivered Quantity", "Delivered Amount"]
 
+    for c in required:
+        if c not in track.columns:
+            st.error(f"Falta {c}")
+            st.stop()
+
+    # =================================================
+    # TRANSFORMACIÓN
+    # =================================================
+
+    ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
+
     track_final = track[required].rename(columns={
         "Created On": "Fecha Creación",
         "PO Number": "Num Order",
         "Sold to Name": "Cliente",
-        "Delivered Quantity": "Unidades",
+        "Delivered Quantity": "Suma de Unidades",
         "Delivered Amount": "Monto"
     })
 
     maestro_final = maestro[["Num Order", "Departamento", "PD"]]
 
-    ordenes_final = ordenes[["O/C Cliente", "Fecha Entrega", "Instrucciones"]].rename(columns={
+    ordenes_final = ordenes[["O/C Cliente", "Fecha Entrega", "Hora"]].rename(columns={
         "O/C Cliente": "Num Order",
         "Fecha Entrega": "Fecha de entrega"
     })
 
-    ordenes_final["Hora"] = ordenes_final["Instrucciones"].apply(extract_hour)
-
-    # normalize
-    for df_ in [track_final, maestro_final, ordenes_final]:
-        df_["Num Order"] = df_["Num Order"].apply(normalize_order)
+    track_final["Num Order"] = track_final["Num Order"].apply(normalize_order)
+    maestro_final["Num Order"] = maestro_final["Num Order"].apply(normalize_order)
+    ordenes_final["Num Order"] = ordenes_final["Num Order"].apply(normalize_order)
 
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
 
-    df["Monto"] = df["Monto"].apply(format_money)
+    df["Monto"] = df["Monto"].apply(format_chilean_money)
 
     # =================================================
-    # 🔥 FECHAS ROBUSTAS
+    # 🔥 FECHAS COMO DATETIME REAL (FIX FINAL)
     # =================================================
 
-    df["Fecha Creación"] = safe_date(df["Fecha Creación"])
-    df["Fecha de entrega"] = safe_date(df["Fecha de entrega"])
+    df["Fecha Creación"] = df["Fecha Creación"].apply(parse_datetime)
+    df["Fecha de entrega"] = df["Fecha de entrega"].apply(parse_datetime)
+
+    df = df.fillna("")
 
     ws = sheet.worksheet("Agenda Final")
     ws.clear()
-    ws.update([df.columns.tolist()] + df.fillna("").values.tolist())
+    ws.update([df.columns.tolist()] + df.values.tolist())
 
     st.success("☁️ Base actualizada")
 
@@ -195,53 +180,90 @@ if st.button("🚀 Generar Agenda"):
 st.divider()
 st.subheader("📦 Base histórica")
 
-latest_df = load_latest()
+latest_df = load_latest_from_sheet()
 
 if not latest_df.empty:
 
-    # FIX FECHAS REAL
-    latest_df["Fecha Creación"] = safe_date(latest_df["Fecha Creación"])
-    latest_df["Fecha de entrega"] = safe_date(latest_df["Fecha de entrega"])
+    # =================================================
+    # FIX: todo datetime limpio
+    # =================================================
+
+    latest_df["Fecha Creación"] = pd.to_datetime(
+        latest_df["Fecha Creación"],
+        errors="coerce"
+    )
+
+    latest_df["Fecha de entrega"] = pd.to_datetime(
+        latest_df["Fecha de entrega"],
+        errors="coerce"
+    )
 
     df_filtered = latest_df.copy()
 
     st.markdown("## 🎯 Filtros")
 
+    # CLIENTE
     clientes = df_filtered["Cliente"].dropna().unique().tolist()
     clientes_sel = st.multiselect("Cliente", clientes)
 
-    min_c, max_c = df_filtered["Fecha Creación"].min(), df_filtered["Fecha Creación"].max()
-    min_e, max_e = df_filtered["Fecha de entrega"].min(), df_filtered["Fecha de entrega"].max()
+    # FECHAS SEGURAS
+    min_c = df_filtered["Fecha Creación"].min()
+    max_c = df_filtered["Fecha Creación"].max()
+
+    min_e = df_filtered["Fecha de entrega"].min()
+    max_e = df_filtered["Fecha de entrega"].max()
 
     fecha_creacion = st.date_input("Fecha creación", value=(min_c.date(), max_c.date()))
     fecha_entrega = st.date_input("Fecha entrega", value=(min_e.date(), max_e.date()))
 
-    incluir_null = st.checkbox("Incluir sin fecha entrega", True)
+    incluir_null = st.checkbox("Incluir sin fecha de entrega", True)
 
-    # CLIENTE
+    # =================================================
+    # FILTRO CLIENTE
+    # =================================================
+
     if clientes_sel:
         df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
 
-    # CREACIÓN
-    start_c = pd.to_datetime(fecha_creacion[0])
-    end_c = pd.to_datetime(fecha_creacion[1])
+    # =================================================
+    # FILTRO FECHA CREACIÓN (FIX REAL)
+    # =================================================
 
-    df_filtered = df_filtered[
-        df_filtered["Fecha Creación"].between(start_c, end_c)
-    ]
+    if isinstance(fecha_creacion, tuple):
+        start = pd.to_datetime(fecha_creacion[0])
+        end = pd.to_datetime(fecha_creacion[1])
 
-    # ENTREGA (FIX FINAL REAL)
-    start_e = pd.to_datetime(fecha_entrega[0])
-    end_e = pd.to_datetime(fecha_entrega[1])
+        df_filtered = df_filtered[
+            (df_filtered["Fecha Creación"] >= start) &
+            (df_filtered["Fecha Creación"] <= end)
+        ]
 
-    entrega = df_filtered["Fecha de entrega"]
+    # =================================================
+    # 🔥 FILTRO FECHA ENTREGA (FIX DEFINITIVO)
+    # =================================================
 
-    mask = entrega.notna() & entrega.between(start_e, end_e)
+    if isinstance(fecha_entrega, tuple):
+        start = pd.to_datetime(fecha_entrega[0])
+        end = pd.to_datetime(fecha_entrega[1])
 
-    if incluir_null:
-        df_filtered = df_filtered[entrega.isna() | mask]
-    else:
-        df_filtered = df_filtered[mask]
+        entrega = df_filtered["Fecha de entrega"]
+
+        mask = (
+            entrega.notna() &
+            (entrega >= start) &
+            (entrega <= end)
+        )
+
+        if incluir_null:
+            df_filtered = df_filtered[
+                entrega.isna() | mask
+            ]
+        else:
+            df_filtered = df_filtered[mask]
+
+    # =================================================
+    # OUTPUT
+    # =================================================
 
     cols = [
         "Num Order",
@@ -249,7 +271,7 @@ if not latest_df.empty:
         "Cliente",
         "Departamento",
         "PD",
-        "Unidades",
+        "Suma de Unidades",
         "Fecha de entrega",
         "Hora",
         "Monto"
@@ -261,7 +283,7 @@ if not latest_df.empty:
     st.dataframe(df_filtered, use_container_width=True)
 
     st.download_button(
-        "Descargar agenda",
+        "Descargar agenda filtrada",
         to_excel(df_filtered),
         file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
