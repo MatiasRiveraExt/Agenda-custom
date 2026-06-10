@@ -89,7 +89,7 @@ def to_excel(df):
     return output.getvalue()
 
 # =====================================================
-# CARGAR BASE HISTÓRICA
+# LOAD DB
 # =====================================================
 
 def load_latest_from_sheet():
@@ -100,10 +100,11 @@ def load_latest_from_sheet():
     return pd.DataFrame(data)
 
 # =====================================================
-# UPSERT HISTÓRICO
+# UPSERT (FIX DEFINITIVO DE ORDEN)
 # =====================================================
 
 def upsert_to_sheet(df_new, sheet_name):
+
     ws = sheet.worksheet(sheet_name)
     existing = ws.get_all_records()
 
@@ -123,11 +124,31 @@ def upsert_to_sheet(df_new, sheet_name):
 
     final_df = final_df.fillna("").astype(str)
 
+    # =================================================
+    # 🔥 ORDEN FORZADO REAL (IMPORTANTE)
+    # =================================================
+
+    desired_order = [
+        "Num Order",
+        "Fecha Creación",
+        "Cliente",
+        "Departamento",
+        "PD",
+        "Suma de Unidades",
+        "Fecha de entrega",
+        "Hora",
+        "Monto"
+    ]
+
+    final_df = final_df[[c for c in desired_order if c in final_df.columns]]
+
+    # =================================================
+    # WRITE A SHEETS
+    # =================================================
+
     ws.clear()
 
-    values = [final_df.columns.tolist()]
-    for row in final_df.values:
-        values.append([str(x) for x in row])
+    values = [final_df.columns.tolist()] + final_df.values.tolist()
 
     ws.update(values)
 
@@ -142,7 +163,7 @@ track_file = st.file_uploader("Archivo Track", type=["xlsx"])
 maestro_file = st.file_uploader("Archivo Maestro", type=["xlsx"])
 
 # =====================================================
-# GENERAR
+# MAIN
 # =====================================================
 
 if st.button("🚀 Actualizar y Generar Agenda"):
@@ -158,7 +179,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     st.success("📥 Archivos cargados correctamente")
 
     # =================================================
-    # VALIDACIÓN
+    # VALIDACIONES
     # =================================================
 
     required_track = [
@@ -175,7 +196,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
             st.stop()
 
     # =================================================
-    # DATA PROCESS
+    # TRANSFORMACIONES
     # =================================================
 
     ordenes["Hora"] = ordenes["Instrucciones"].apply(extract_hour)
@@ -205,46 +226,46 @@ if st.button("🚀 Actualizar y Generar Agenda"):
         "Fecha Entrega": "Fecha de entrega"
     })
 
+    # =================================================
+    # NORMALIZAR
+    # =================================================
+
     track_final["Num Order"] = track_final["Num Order"].apply(normalize_order)
     maestro_final["Num Order"] = maestro_final["Num Order"].apply(normalize_order)
     ordenes_final["Num Order"] = ordenes_final["Num Order"].apply(normalize_order)
 
-    track_final = track_final.drop_duplicates(subset="Num Order", keep="last")
-    maestro_final = maestro_final.drop_duplicates(subset="Num Order", keep="last")
-    ordenes_final = ordenes_final.drop_duplicates(subset="Num Order", keep="last")
+    # =================================================
+    # MERGE
+    # =================================================
 
     df = track_final.merge(maestro_final, on="Num Order", how="left")
     df = df.merge(ordenes_final, on="Num Order", how="left")
+
+    # =================================================
+    # FORMATO
+    # =================================================
 
     df["Monto"] = df["Monto"].apply(format_chilean_money)
     df["Fecha de entrega"] = df["Fecha de entrega"].apply(format_date)
     df["Fecha Creación"] = df["Fecha Creación"].apply(format_date)
 
-    # =================================================
-    # 🔥 ORDEN FINAL DE COLUMNAS (AQUÍ EL CAMBIO)
-    # =================================================
-
-    df = df[[
-        "Num Order",
-        "Fecha Creación",
-        "Cliente",
-        "Departamento",
-        "PD",
-        "Suma de Unidades",
-        "Fecha de entrega",
-        "Hora",
-        "Monto"
-    ]]
-
     df = df.fillna("")
+
+    # =================================================
+    # GUARDAR EN DB
+    # =================================================
 
     upsert_to_sheet(df, "Agenda Final")
 
     st.success("☁️ Base histórica actualizada")
 
+    # =================================================
+    # RECARGA
+    # =================================================
+
     df = load_latest_from_sheet()
 
-    st.success("📦 Agenda reconstruida desde TODA la base histórica")
+    st.success("📦 Agenda reconstruida desde base histórica")
 
     st.metric("📊 OC históricas", len(df))
 
@@ -258,7 +279,7 @@ if st.button("🚀 Actualizar y Generar Agenda"):
     )
 
 # =====================================================
-# DESCARGA BASE
+# VIEW DB
 # =====================================================
 
 st.divider()
