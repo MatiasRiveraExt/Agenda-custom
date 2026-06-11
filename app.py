@@ -173,9 +173,21 @@ if st.button("🚀 Actualizar"):
         "Delivered Quantity": "Unidades",
         "Delivered Amount": "Monto"
     })
+    st.write(
+    "Duplicados por Order Number:",
+    track["Order Number"].duplicated().sum()
+    )
+
+    st.dataframe(
+    track[track["Order Number"].duplicated(keep=False)]
+    )
 
     # 🔥 NORMALIZACIÓN PO DEFINITIVA
     track["Num Order"] = track["Num Order"].apply(clean_order)
+    track["Delivery Number"] = pd.to_numeric(
+    track["Delivery Number"],
+    errors="coerce"
+    )
 
     track["Unidades"] = track["Unidades"].apply(clean_number)
     track["Monto"] = track["Monto"].apply(clean_number)
