@@ -36,6 +36,7 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
+
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 
 spreadsheet = client.open_by_key(SHEET_ID)
@@ -60,8 +61,8 @@ def clean_order(x):
         return ""
 
     x = str(x).strip()
-    x = x.replace(".0","")
-    x = re.sub(r"\s+","",x)
+    x = x.replace(".0", "")
+    x = re.sub(r"\s+", "", x)
 
     return x.lstrip("0")
 
@@ -84,17 +85,15 @@ def get_hour(x):
 def money(x):
 
     try:
-
         x = float(
             str(x)
-            .replace(".","")
-            .replace(",","")
+            .replace(".", "")
+            .replace(",", "")
         )
 
         return f"{int(x):,}".replace(",", ".")
 
     except:
-
         return x
 
 
@@ -193,11 +192,9 @@ if st.button("🚀 Actualizar"):
         pd.read_excel(ordenes_file)
     )
 
-
     track = clean_columns(
         pd.read_excel(track_file)
     )
-
 
     maestro = clean_columns(
         pd.read_excel(maestro_file)
@@ -208,7 +205,6 @@ if st.button("🚀 Actualizar"):
     # =================================================
     # TRACK
     # =================================================
-
 
     track = track[
         [
@@ -233,19 +229,10 @@ if st.button("🚀 Actualizar"):
     )
 
 
-
-    # limpiar llave
-
     track["Num Order"] = (
         track["Num Order"]
         .apply(clean_order)
     )
-
-
-
-    # =================================================
-    # 🔥 NUEVO: SUMAR PEDIDOS POR NUM ORDER
-    # =================================================
 
 
     track["Unidades"] = pd.to_numeric(
@@ -260,6 +247,10 @@ if st.button("🚀 Actualizar"):
     ).fillna(0)
 
 
+
+    # =================================================
+    # SUMAR TODOS LOS PEDIDOS POR OC
+    # =================================================
 
     track = (
         track
@@ -283,7 +274,6 @@ if st.button("🚀 Actualizar"):
     # MAESTRO
     # =================================================
 
-
     maestro = maestro.reindex(
         columns=[
             "Num Order",
@@ -303,7 +293,6 @@ if st.button("🚀 Actualizar"):
     # =================================================
     # ORDENES
     # =================================================
-
 
     ordenes = ordenes.reindex(
         columns=[
@@ -336,9 +325,8 @@ if st.button("🚀 Actualizar"):
 
 
     # =================================================
-    # MERGE FINAL
+    # MERGE
     # =================================================
-
 
     nuevo = track.merge(
         maestro,
@@ -352,7 +340,6 @@ if st.button("🚀 Actualizar"):
         on="Num Order",
         how="left"
     )
-
 
 
     nuevo["Monto"] = (
@@ -378,12 +365,12 @@ if st.button("🚀 Actualizar"):
     # UPSERT HISTORICO
     # =================================================
 
-
     viejo = read_database()
 
 
-
     if not viejo.empty:
+
+        viejo = clean_columns(viejo)
 
         viejo["Num Order"] = (
             viejo["Num Order"]
@@ -399,11 +386,14 @@ if st.button("🚀 Actualizar"):
             ignore_index=True
         )
 
+
     else:
 
         final = nuevo
 
 
+
+    # limpieza final
 
     final["Num Order"] = (
         final["Num Order"]
@@ -411,11 +401,16 @@ if st.button("🚀 Actualizar"):
     )
 
 
-
-    final = final.sort_values(
-        "Fecha Creación"
+    final["Fecha Creación"] = pd.to_datetime(
+        final["Fecha Creación"],
+        errors="coerce"
     )
 
+
+    final = final.sort_values(
+        by="Fecha Creación",
+        na_position="first"
+    )
 
 
     final = final.drop_duplicates(
@@ -424,6 +419,11 @@ if st.button("🚀 Actualizar"):
     )
 
 
+    final = final.reset_index(drop=True)
+
+
+
+    # guardar
 
     ws.clear()
 
@@ -454,6 +454,9 @@ df = read_database()
 if not df.empty:
 
 
+    df = clean_columns(df)
+
+
     clientes = (
         df["Cliente"]
         .dropna()
@@ -462,26 +465,28 @@ if not df.empty:
     )
 
 
-    filtro_cliente = st.multiselect(
+    filtro = st.multiselect(
         "Cliente",
         clientes
     )
 
 
-    if filtro_cliente:
+    if filtro:
 
         df = df[
             df["Cliente"]
-            .isin(filtro_cliente)
+            .isin(filtro)
         ]
 
 
 
-    fechas = pd.to_datetime(
+    df["Fecha Creación"] = pd.to_datetime(
         df["Fecha Creación"],
         errors="coerce"
-    ).dropna()
+    )
 
+
+    fechas = df["Fecha Creación"].dropna()
 
 
     if not fechas.empty:
@@ -493,12 +498,6 @@ if not df.empty:
                 fechas.min().date(),
                 fechas.max().date()
             )
-        )
-
-
-        df["Fecha Creación"] = pd.to_datetime(
-            df["Fecha Creación"],
-            errors="coerce"
         )
 
 
@@ -548,6 +547,9 @@ if not df.empty:
         file_name=f"Agenda_{datetime.now().strftime('%Y%m%d')}.xlsx"
     )
 
+
 else:
 
-    st.warning("Sin datos")
+    st.warning(
+        "Sin datos"
+    )
