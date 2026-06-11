@@ -161,6 +161,8 @@ if st.button("🚀 Actualizar"):
     track = track[[
         "Created On",
         "PO Number",
+        "Order Number",
+        "Delivery Number",
         "Sold to Name",
         "Delivered Quantity",
         "Delivered Amount"
