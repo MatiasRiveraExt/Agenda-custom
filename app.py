@@ -32,8 +32,7 @@ creds = Credentials.from_service_account_info(
 client = gspread.authorize(creds)
 
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
-spreadsheet = client.open_by_key(SHEET_ID)
-ws = spreadsheet.worksheet("Agenda Final")
+ws = client.open_by_key(SHEET_ID).worksheet("Agenda Final")
 
 
 # =====================================================
@@ -46,13 +45,31 @@ def clean_columns(df):
     return df
 
 
+# =====================================================
+# 🔥 FIX DEFINITIVO PO NUMBER
+# =====================================================
+
 def clean_order(x):
     if pd.isna(x):
         return ""
-    x = str(x).strip()
-    x = x.replace(".0", "")
-    x = re.sub(r"\s+", "", x)
-    return x.lstrip("0")
+
+    x = str(x)
+
+    # eliminar espacios invisibles
+    x = x.replace("\u00a0", "").replace(" ", "")
+    x = x.replace("\n", "").replace("\t", "")
+
+    # eliminar formato Excel float
+    if x.endswith(".0"):
+        x = x[:-2]
+
+    # dejar solo números
+    x = re.sub(r"[^0-9]", "", x)
+
+    # quitar ceros izquierda
+    x = x.lstrip("0")
+
+    return x
 
 
 def get_hour(x):
@@ -62,26 +79,19 @@ def get_hour(x):
     return r.group(0) if r else ""
 
 
-# =====================================================
-# 🔥 FIX REAL NUMÉRICO (CLAVE)
-# =====================================================
-
 def clean_number(x):
     if pd.isna(x):
         return 0
 
     x = str(x).strip()
 
-    # caso 1: 1.234,56 → 1234.56
     if "." in x and "," in x:
         x = x.replace(".", "")
         x = x.replace(",", ".")
 
-    # caso 2: 1,234 → 1234
     elif "," in x:
         x = x.replace(",", "")
 
-    # caso 3: 1234.56 OK
     try:
         return float(x)
     except:
@@ -131,7 +141,7 @@ maestro_file = st.file_uploader("Maestro", type=["xlsx"])
 
 
 # =====================================================
-# GENERAR
+# GENERAR BASE
 # =====================================================
 
 if st.button("🚀 Actualizar"):
@@ -162,19 +172,20 @@ if st.button("🚀 Actualizar"):
         "Delivered Amount": "Monto"
     })
 
+    # 🔥 NORMALIZACIÓN PO DEFINITIVA
     track["Num Order"] = track["Num Order"].apply(clean_order)
 
-    # 🔥 FIX NUMÉRICO REAL
     track["Unidades"] = track["Unidades"].apply(clean_number)
     track["Monto"] = track["Monto"].apply(clean_number)
 
     # =================================================
-    # 🔥 AGRUPACIÓN CORRECTA
+    # GROUPBY CORRECTO
     # =================================================
 
     track = track.groupby(
         "Num Order",
-        as_index=False
+        as_index=False,
+        dropna=False
     ).agg({
         "Fecha Creación": "max",
         "Cliente": "first",
@@ -213,7 +224,7 @@ if st.button("🚀 Actualizar"):
     ordenes["Num Order"] = ordenes["Num Order"].apply(clean_order)
 
     # =================================================
-    # MERGE
+    # MERGE FINAL
     # =================================================
 
     nuevo = track.merge(maestro, on="Num Order", how="left")
@@ -237,6 +248,7 @@ if st.button("🚀 Actualizar"):
         final = nuevo
 
     final["Num Order"] = final["Num Order"].apply(clean_order)
+
     final["Fecha Creación"] = pd.to_datetime(final["Fecha Creación"], errors="coerce")
 
     final = final.sort_values(by="Fecha Creación", na_position="first")
@@ -275,6 +287,7 @@ if not df.empty:
         df = df[df["Cliente"].isin(filtro)]
 
     df["Fecha Creación"] = pd.to_datetime(df["Fecha Creación"], errors="coerce")
+
     fechas = df["Fecha Creación"].dropna()
 
     if not fechas.empty:
