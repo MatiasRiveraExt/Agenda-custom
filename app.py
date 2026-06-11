@@ -36,7 +36,6 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
-
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
 
 spreadsheet = client.open_by_key(SHEET_ID)
@@ -60,10 +59,9 @@ def clean_order(x):
     if pd.isna(x):
         return ""
 
-    x = str(x)
-    x = x.strip()
-    x = x.replace(".0", "")
-    x = re.sub(r"\s+", "", x)
+    x = str(x).strip()
+    x = x.replace(".0","")
+    x = re.sub(r"\s+","",x)
 
     return x.lstrip("0")
 
@@ -74,18 +72,19 @@ def get_hour(x):
     if pd.isna(x):
         return ""
 
-    result = re.search(
+    r = re.search(
         r"\d{1,2}:\d{2}",
         str(x)
     )
 
-    return result.group(0) if result else ""
+    return r.group(0) if r else ""
 
 
 
 def money(x):
 
     try:
+
         x = float(
             str(x)
             .replace(".","")
@@ -95,6 +94,7 @@ def money(x):
         return f"{int(x):,}".replace(",", ".")
 
     except:
+
         return x
 
 
@@ -112,27 +112,22 @@ def read_database():
 
 def sheet_values(df):
 
-    result = []
+    values = []
 
-    result.append(
+    values.append(
         [str(c) for c in df.columns]
     )
 
     for row in df.itertuples(index=False):
 
-        new_row=[]
+        values.append(
+            [
+                "" if pd.isna(v) else str(v)
+                for v in row
+            ]
+        )
 
-        for value in row:
-
-            if pd.isna(value):
-                new_row.append("")
-            else:
-                new_row.append(str(value))
-
-        result.append(new_row)
-
-
-    return result
+    return values
 
 
 
@@ -155,23 +150,24 @@ def excel_download(df):
 
 
 # =====================================================
-# CARGA
+# ACTUALIZAR BASE
 # =====================================================
 
 st.subheader("📤 Actualizar base")
 
+
 ordenes_file = st.file_uploader(
-    "Archivo Ordenes",
+    "Ordenes",
     type=["xlsx"]
 )
 
 track_file = st.file_uploader(
-    "Archivo Track",
+    "Track",
     type=["xlsx"]
 )
 
 maestro_file = st.file_uploader(
-    "Archivo Maestro",
+    "Maestro",
     type=["xlsx"]
 )
 
@@ -188,10 +184,7 @@ if st.button("🚀 Actualizar"):
         ]
     ):
 
-        st.error(
-            "Faltan archivos"
-        )
-
+        st.error("Faltan archivos")
         st.stop()
 
 
@@ -200,22 +193,27 @@ if st.button("🚀 Actualizar"):
         pd.read_excel(ordenes_file)
     )
 
+
     track = clean_columns(
         pd.read_excel(track_file)
     )
+
 
     maestro = clean_columns(
         pd.read_excel(maestro_file)
     )
 
 
-    # ------------------------------
+
+    # =================================================
     # TRACK
-    # ------------------------------
+    # =================================================
+
 
     track = track[
         [
             "Created On",
+            "Order Number",
             "PO Number",
             "Sold to Name",
             "Delivered Quantity",
@@ -235,9 +233,56 @@ if st.button("🚀 Actualizar"):
     )
 
 
-    # ------------------------------
+
+    # limpiar llave
+
+    track["Num Order"] = (
+        track["Num Order"]
+        .apply(clean_order)
+    )
+
+
+
+    # =================================================
+    # 🔥 NUEVO: SUMAR PEDIDOS POR NUM ORDER
+    # =================================================
+
+
+    track["Unidades"] = pd.to_numeric(
+        track["Unidades"],
+        errors="coerce"
+    ).fillna(0)
+
+
+    track["Monto"] = pd.to_numeric(
+        track["Monto"],
+        errors="coerce"
+    ).fillna(0)
+
+
+
+    track = (
+        track
+        .groupby(
+            "Num Order",
+            as_index=False
+        )
+        .agg(
+            {
+                "Fecha Creación":"max",
+                "Cliente":"first",
+                "Unidades":"sum",
+                "Monto":"sum"
+            }
+        )
+    )
+
+
+
+    # =================================================
     # MAESTRO
-    # ------------------------------
+    # =================================================
+
 
     maestro = maestro.reindex(
         columns=[
@@ -248,9 +293,17 @@ if st.button("🚀 Actualizar"):
     )
 
 
-    # ------------------------------
+    maestro["Num Order"] = (
+        maestro["Num Order"]
+        .apply(clean_order)
+    )
+
+
+
+    # =================================================
     # ORDENES
-    # ------------------------------
+    # =================================================
+
 
     ordenes = ordenes.reindex(
         columns=[
@@ -275,26 +328,17 @@ if st.button("🚀 Actualizar"):
     )
 
 
-    # ------------------------------
-    # LIMPIAR KEYS
-    # ------------------------------
-
-    for x in [
-        track,
-        maestro,
-        ordenes
-    ]:
-
-        x["Num Order"] = (
-            x["Num Order"]
-            .apply(clean_order)
-        )
+    ordenes["Num Order"] = (
+        ordenes["Num Order"]
+        .apply(clean_order)
+    )
 
 
 
-    # ------------------------------
-    # MERGES
-    # ------------------------------
+    # =================================================
+    # MERGE FINAL
+    # =================================================
+
 
     nuevo = track.merge(
         maestro,
@@ -308,6 +352,7 @@ if st.button("🚀 Actualizar"):
         on="Num Order",
         how="left"
     )
+
 
 
     nuevo["Monto"] = (
@@ -333,22 +378,16 @@ if st.button("🚀 Actualizar"):
     # UPSERT HISTORICO
     # =================================================
 
+
     viejo = read_database()
+
 
 
     if not viejo.empty:
 
-        viejo = clean_columns(viejo)
-
         viejo["Num Order"] = (
             viejo["Num Order"]
             .apply(clean_order)
-        )
-
-
-        viejo["Fecha Creación"] = pd.to_datetime(
-            viejo["Fecha Creación"],
-            errors="coerce"
         )
 
 
@@ -372,9 +411,11 @@ if st.button("🚀 Actualizar"):
     )
 
 
+
     final = final.sort_values(
         "Fecha Creación"
     )
+
 
 
     final = final.drop_duplicates(
@@ -383,11 +424,6 @@ if st.button("🚀 Actualizar"):
     )
 
 
-    final = final.reset_index(drop=True)
-
-
-
-    # guardar
 
     ws.clear()
 
@@ -397,7 +433,7 @@ if st.button("🚀 Actualizar"):
 
 
     st.success(
-        f"Base actualizada: {len(final)} registros"
+        f"Base actualizada: {len(final)} OC"
     )
 
 
@@ -414,22 +450,29 @@ st.subheader("📋 Agenda")
 df = read_database()
 
 
+
 if not df.empty:
 
 
-    df = clean_columns(df)
-
-
-    filtro = st.multiselect(
-        "Cliente",
-        df["Cliente"].dropna().unique()
+    clientes = (
+        df["Cliente"]
+        .dropna()
+        .unique()
+        .tolist()
     )
 
 
-    if filtro:
+    filtro_cliente = st.multiselect(
+        "Cliente",
+        clientes
+    )
+
+
+    if filtro_cliente:
 
         df = df[
-            df["Cliente"].isin(filtro)
+            df["Cliente"]
+            .isin(filtro_cliente)
         ]
 
 
@@ -438,6 +481,7 @@ if not df.empty:
         df["Fecha Creación"],
         errors="coerce"
     ).dropna()
+
 
 
     if not fechas.empty:
@@ -452,10 +496,6 @@ if not df.empty:
         )
 
 
-        inicio = pd.to_datetime(rango[0])
-        fin = pd.to_datetime(rango[1])
-
-
         df["Fecha Creación"] = pd.to_datetime(
             df["Fecha Creación"],
             errors="coerce"
@@ -463,9 +503,10 @@ if not df.empty:
 
 
         df = df[
-            df["Fecha Creación"].between(
-                inicio,
-                fin
+            df["Fecha Creación"]
+            .between(
+                pd.to_datetime(rango[0]),
+                pd.to_datetime(rango[1])
             )
         ]
 
@@ -509,6 +550,4 @@ if not df.empty:
 
 else:
 
-    st.warning(
-        "Base vacía"
-    )
+    st.warning("Sin datos")
