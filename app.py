@@ -6,12 +6,18 @@ from datetime import datetime
 from io import BytesIO
 import re
 
+
 # =====================================================
 # CONFIG
 # =====================================================
 
-st.set_page_config(page_title="Agenda PRO DB", layout="wide")
-st.title("📊 Agenda Automática PRO - SIN DUPLICADOS")
+st.set_page_config(
+    page_title="Agenda PRO DB",
+    layout="wide"
+)
+
+st.title("📊 Agenda Automática PRO")
+
 
 # =====================================================
 # GOOGLE SHEETS
@@ -22,6 +28,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+
 creds = Credentials.from_service_account_info(
     st.secrets["gcp_service_account"],
     scopes=SCOPES
@@ -29,10 +36,16 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 
+
 SHEET_ID = "1vOcVAGUzQjVGMKnFZUTQ0SLM7lBGBgAhK6RHGKJyBpk"
+
 sheet = client.open_by_key(SHEET_ID)
 
+ws = sheet.worksheet("Agenda Final")
+
+
 st.success("✅ Conectado a Google Sheets")
+
 
 # =====================================================
 # HELPERS
@@ -40,103 +53,185 @@ st.success("✅ Conectado a Google Sheets")
 
 def normalize_columns(df):
     df = df.copy()
-    df.columns = df.columns.astype(str).str.strip()
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+    )
     return df
 
 
+
 def normalize_order(x):
+
     if pd.isna(x):
         return ""
-    return str(x).strip().replace(".0", "").lstrip("0")
+
+    x = str(x)
+    x = x.strip()
+    x = x.replace(".0","")
+
+    # elimina espacios invisibles
+    x = re.sub(r"\s+", "", x)
+
+    # elimina ceros iniciales
+    x = x.lstrip("0")
+
+    return x
+
 
 
 def extract_hour(text):
+
     if pd.isna(text):
         return ""
-    m = re.search(r'(\d{1,2}:\d{2})', str(text))
+
+    m = re.search(
+        r"(\d{1,2}:\d{2})",
+        str(text)
+    )
+
     return m.group(1) if m else ""
 
 
+
 def format_money(v):
+
     try:
-        v = float(str(v).replace(".", "").replace(",", ""))
+
+        v = float(
+            str(v)
+            .replace(".","")
+            .replace(",","")
+        )
+
         return f"{int(v):,}".replace(",", ".")
+
     except:
         return v
 
 
-def to_datetime(series):
-    return pd.to_datetime(series, errors="coerce")
-
-# =====================================================
-# SAFE SHEETS SERIALIZER
-# =====================================================
 
 def safe_gsheets_values(df):
-    df = df.copy()
 
     values = []
-    values.append([str(c) for c in df.columns])
 
-    for row in df.itertuples(index=False, name=None):
-        clean_row = []
+    values.append(
+        [str(c) for c in df.columns]
+    )
+
+
+    for row in df.itertuples(index=False):
+
+        clean=[]
+
         for v in row:
+
             if pd.isna(v):
-                clean_row.append("")
+                clean.append("")
             else:
-                clean_row.append(str(v))
-        values.append(clean_row)
+                clean.append(str(v))
+
+        values.append(clean)
+
 
     return values
 
-# =====================================================
-# EXCEL EXPORT
-# =====================================================
+
 
 def to_excel(df):
+
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+
+        df.to_excel(
+            writer,
+            index=False
+        )
+
+
     return output.getvalue()
 
-# =====================================================
-# LOAD SHEET
-# =====================================================
 
-def load_latest():
-    ws = sheet.worksheet("Agenda Final")
+
+def load_database():
+
     data = ws.get_all_records()
-    return pd.DataFrame(data) if data else pd.DataFrame()
+
+    if len(data)==0:
+        return pd.DataFrame()
+
+    return pd.DataFrame(data)
+
+
 
 # =====================================================
-# UI
+# ARCHIVOS
 # =====================================================
 
-st.subheader("📤 Generar agenda")
+st.subheader("📤 Nueva carga")
 
-ordenes_file = st.file_uploader("Ordenes", type=["xlsx"])
-track_file = st.file_uploader("Track", type=["xlsx"])
-maestro_file = st.file_uploader("Maestro", type=["xlsx"])
+
+ordenes_file = st.file_uploader(
+    "Ordenes",
+    type=["xlsx"]
+)
+
+track_file = st.file_uploader(
+    "Track",
+    type=["xlsx"]
+)
+
+maestro_file = st.file_uploader(
+    "Maestro",
+    type=["xlsx"]
+)
+
+
 
 # =====================================================
-# GENERAR
+# GENERAR NUEVA CARGA
 # =====================================================
 
-if st.button("🚀 Generar"):
+
+if st.button("🚀 Actualizar base"):
+
 
     if not ordenes_file or not track_file or not maestro_file:
-        st.error("Faltan archivos")
+
+        st.error(
+            "Faltan archivos"
+        )
+
         st.stop()
 
-    ordenes = normalize_columns(pd.read_excel(ordenes_file))
-    track = normalize_columns(pd.read_excel(track_file))
-    maestro = normalize_columns(pd.read_excel(maestro_file))
 
-    st.success("📥 Archivos cargados")
 
-    # =================================================
+    ordenes = normalize_columns(
+        pd.read_excel(ordenes_file)
+    )
+
+    track = normalize_columns(
+        pd.read_excel(track_file)
+    )
+
+    maestro = normalize_columns(
+        pd.read_excel(maestro_file)
+    )
+
+
+    st.success(
+        "📥 Archivos cargados"
+    )
+
+
+    # -------------------------
     # TRACK
-    # =================================================
+    # -------------------------
 
     track_final = track[[
         "Created On",
@@ -144,120 +239,257 @@ if st.button("🚀 Generar"):
         "Sold to Name",
         "Delivered Quantity",
         "Delivered Amount"
-    ]].rename(columns={
-        "Created On": "Fecha Creación",
-        "PO Number": "Num Order",
-        "Sold to Name": "Cliente",
-        "Delivered Quantity": "Unidades",
-        "Delivered Amount": "Monto"
-    })
+    ]].rename(
+        columns={
+            "Created On":"Fecha Creación",
+            "PO Number":"Num Order",
+            "Sold to Name":"Cliente",
+            "Delivered Quantity":"Unidades",
+            "Delivered Amount":"Monto"
+        }
+    )
 
-    maestro_final = maestro.reindex(columns=["Num Order", "Departamento", "PD"])
 
-    ordenes_final = ordenes.reindex(columns=["O/C Cliente", "Fecha Entrega", "Instrucciones"])
 
-    ordenes_final = ordenes_final.rename(columns={
-        "O/C Cliente": "Num Order",
-        "Fecha Entrega": "Fecha de entrega"
-    })
+    maestro_final = maestro.reindex(
+        columns=[
+            "Num Order",
+            "Departamento",
+            "PD"
+        ]
+    )
 
-    ordenes_final["Hora"] = ordenes_final.get("Instrucciones", "").apply(extract_hour)
 
-    # =================================================
-    # NORMALIZAR KEY
-    # =================================================
 
-    for df in [track_final, maestro_final, ordenes_final]:
-        df["Num Order"] = df["Num Order"].apply(normalize_order)
+    ordenes_final = ordenes.reindex(
+        columns=[
+            "O/C Cliente",
+            "Fecha Entrega",
+            "Instrucciones"
+        ]
+    )
 
-    # =================================================
+
+
+    ordenes_final = ordenes_final.rename(
+        columns={
+            "O/C Cliente":"Num Order",
+            "Fecha Entrega":"Fecha de entrega"
+        }
+    )
+
+
+
+    ordenes_final["Hora"] = (
+        ordenes_final["Instrucciones"]
+        .apply(extract_hour)
+    )
+
+
+    # -------------------------
+    # NORMALIZAR
+    # -------------------------
+
+    for d in [
+        track_final,
+        maestro_final,
+        ordenes_final
+    ]:
+
+        d["Num Order"] = (
+            d["Num Order"]
+            .apply(normalize_order)
+        )
+
+
+
+    # -------------------------
     # MERGE
+    # -------------------------
+
+    df = track_final.merge(
+        maestro_final,
+        on="Num Order",
+        how="left"
+    )
+
+
+    df = df.merge(
+        ordenes_final,
+        on="Num Order",
+        how="left"
+    )
+
+
+    df["Monto"] = (
+        df["Monto"]
+        .apply(format_money)
+    )
+
+
+    df["Fecha Creación"] = pd.to_datetime(
+        df["Fecha Creación"],
+        errors="coerce"
+    )
+
+
+    df["Fecha de entrega"] = pd.to_datetime(
+        df["Fecha de entrega"],
+        errors="coerce"
+    )
+
+
+
+    # =================================================
+    # 🔥 UPSERT REAL
     # =================================================
 
-    df = track_final.merge(maestro_final, on="Num Order", how="left")
-    df = df.merge(ordenes_final, on="Num Order", how="left")
 
-    df["Monto"] = df["Monto"].apply(format_money)
+    old = load_database()
 
-    df["Fecha Creación"] = to_datetime(df["Fecha Creación"])
-    df["Fecha de entrega"] = to_datetime(df["Fecha de entrega"])
 
-    # =================================================
-    # 🔥 FIX DUPLICADOS (CLAVE NUEVA)
-    # =================================================
 
-    df = df.drop_duplicates(subset=["Num Order"], keep="last")
+    if not old.empty:
 
-    # =================================================
-    # UPLOAD A SHEETS
-    # =================================================
 
-    ws = sheet.worksheet("Agenda Final")
+        old["Num Order"] = (
+            old["Num Order"]
+            .apply(normalize_order)
+        )
+
+
+        final_df = pd.concat(
+            [
+                old,
+                df
+            ],
+            ignore_index=True
+        )
+
+
+    else:
+
+        final_df = df.copy()
+
+
+
+    final_df["Num Order"] = (
+        final_df["Num Order"]
+        .apply(normalize_order)
+    )
+
+
+
+    # elimina duplicados conservando último
+    final_df = final_df.drop_duplicates(
+        subset=["Num Order"],
+        keep="last"
+    )
+
+
+
+    # guardar
+
     ws.clear()
 
-    values = safe_gsheets_values(df)
+    ws.update(
+        safe_gsheets_values(final_df)
+    )
 
-    ws.update(values)
 
-    st.success("☁️ Base actualizada sin duplicados")
+    st.success(
+        f"☁️ Base actualizada. Registros: {len(final_df)}"
+    )
+
+
 
 # =====================================================
-# LOAD + FILTERS
+# AGENDA
 # =====================================================
 
 st.divider()
+
 st.subheader("📦 Agenda")
 
-latest_df = load_latest()
 
-if not latest_df.empty:
+agenda = load_database()
 
-    latest_df = normalize_columns(latest_df)
 
-    df_filtered = latest_df.copy()
 
-    # =================================================
-    # CLIENTES
-    # =================================================
+if not agenda.empty:
 
-    clientes = df_filtered["Cliente"].dropna().unique().tolist()
-    clientes_sel = st.multiselect("Cliente", clientes)
 
-    if clientes_sel:
-        df_filtered = df_filtered[df_filtered["Cliente"].isin(clientes_sel)]
+    df = agenda.copy()
 
-    # =================================================
-    # FECHA CREACIÓN FILTER
-    # =================================================
 
-    fechas = pd.to_datetime(df_filtered["Fecha Creación"], errors="coerce").dropna()
+    # -------------------------
+    # CLIENTE
+    # -------------------------
 
-    if fechas.empty:
-        st.warning("No hay fechas válidas")
-        st.stop()
-
-    min_c = fechas.min()
-    max_c = fechas.max()
-
-    fecha_creacion = st.date_input(
-        "Fecha creación",
-        value=(min_c.date(), max_c.date())
+    clientes = (
+        df["Cliente"]
+        .dropna()
+        .unique()
+        .tolist()
     )
 
-    start_c = pd.to_datetime(fecha_creacion[0])
-    end_c = pd.to_datetime(fecha_creacion[1])
 
-    df_filtered["Fecha Creación"] = pd.to_datetime(df_filtered["Fecha Creación"], errors="coerce")
+    seleccion = st.multiselect(
+        "Cliente",
+        clientes
+    )
 
-    df_filtered = df_filtered[
-        df_filtered["Fecha Creación"].between(start_c, end_c)
-    ]
 
-    # =================================================
-    # OUTPUT
-    # =================================================
+    if seleccion:
 
-    cols = [
+        df = df[
+            df["Cliente"]
+            .isin(seleccion)
+        ]
+
+
+
+    # -------------------------
+    # FECHA CREACION
+    # -------------------------
+
+    fechas = pd.to_datetime(
+        df["Fecha Creación"],
+        errors="coerce"
+    ).dropna()
+
+
+
+    if not fechas.empty:
+
+
+        rango = st.date_input(
+            "Fecha creación",
+            value=(
+                fechas.min().date(),
+                fechas.max().date()
+            )
+        )
+
+
+        inicio = pd.to_datetime(rango[0])
+        fin = pd.to_datetime(rango[1])
+
+
+        df["Fecha Creación"] = pd.to_datetime(
+            df["Fecha Creación"],
+            errors="coerce"
+        )
+
+
+        df = df[
+            df["Fecha Creación"]
+            .between(inicio, fin)
+        ]
+
+
+
+    columnas = [
         "Num Order",
         "Fecha Creación",
         "Cliente",
@@ -269,17 +501,36 @@ if not latest_df.empty:
         "Monto"
     ]
 
-    df_filtered = df_filtered.reindex(columns=cols)
 
-    st.metric("Resultados", len(df_filtered))
-    st.dataframe(df_filtered, use_container_width=True)
-
-    st.download_button(
-        "Descargar agenda",
-        to_excel(df_filtered),
-        file_name=f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    df = df.reindex(
+        columns=columnas
     )
 
+
+    st.metric(
+        "Resultados",
+        len(df)
+    )
+
+
+    st.dataframe(
+        df,
+        use_container_width=True
+    )
+
+
+    st.download_button(
+        "⬇️ Descargar agenda",
+        to_excel(df),
+        file_name=
+        f"Agenda_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime=
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
 else:
-    st.warning("Sin datos")
+
+    st.warning(
+        "No hay datos"
+    )
