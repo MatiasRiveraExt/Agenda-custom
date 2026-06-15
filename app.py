@@ -193,6 +193,26 @@ if st.button("🚀 Actualizar"):
     track["Monto"] = track["Monto"].apply(clean_number)
 
     # =================================================
+    # ELIMINAR DUPLICADOS DE ORDER NUMBER
+    # CONSERVANDO EL MENOR DELIVERY NUMBER
+    # =================================================
+
+    track = track.sort_values(
+        ["Order Number", "Delivery Number"],
+        ascending=[True, True]
+    )
+
+    track = track.drop_duplicates(
+        subset=["Order Number"],
+        keep="first"
+    )
+    
+    st.write(
+        "Registros después de eliminar duplicados:",
+        len(track)
+    )
+
+    # =================================================
     # GROUPBY CORRECTO
     # =================================================
 
