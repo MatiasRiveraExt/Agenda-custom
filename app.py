@@ -182,6 +182,18 @@ if st.button("🚀 Actualizar"):
     track[track["Order Number"].duplicated(keep=False)]
     )
 
+    st.write("Filas Track:", len(track))
+
+    st.write(
+        "Order Number únicos:",
+        track["Order Number"].nunique()
+    )
+    
+    st.write(
+        "Duplicados detectados:",
+        len(track) - track["Order Number"].nunique()
+    )
+
     # 🔥 NORMALIZACIÓN PO DEFINITIVA
     track["Num Order"] = track["Num Order"].apply(clean_order)
     track["Delivery Number"] = pd.to_numeric(
